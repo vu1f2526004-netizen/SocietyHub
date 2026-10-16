@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # SocietyHub - Smart Society Management System
 
 SocietyHub is a comprehensive, production-ready Full-Stack MERN (MongoDB, Express, React, Node.js) application built to digitize residential society operations.
@@ -94,3 +95,6 @@ node test-api.js
 
 ## Deployment Direction
 For production deployment, ensure all placeholders in `.env` are replaced with strong production secrets. The backend can be hosted on platforms like Render or AWS EC2, and the frontend on Vercel or Netlify. Ensure CORS is strictly bound to the frontend domain.
+=======
+# SocietyHub
+>>>>>>> 67579da5800764d6ae828e7aa0b78b1d7ec5cc88
