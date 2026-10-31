@@ -2,6 +2,7 @@ import React, { useState, useContext, useEffect, useRef } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { formatErrorMessage } from '../utils/formatError';
 import PublicNavbar from './Public/components/PublicNavbar';
 import {
   Building2,
@@ -68,16 +69,10 @@ const Login = () => {
       await login(trimmedEmail, password, selectedRole);
     } catch (err) {
       const status = err.response?.status;
-      let errorMsg = err.response?.data?.error || err.response?.data?.message;
-
-      if (status === 429) {
-        errorMsg = errorMsg || 'Too many login attempts. Please wait a few moments before trying again.';
-      } else if (!errorMsg) {
-        errorMsg = typeof err.response?.data === 'string' && err.response.data.length < 150
-          ? err.response.data
-          : 'Invalid credentials or login failed. Please check your email and password.';
-      }
-
+      const defaultMsg = status === 429
+        ? 'Too many login attempts. Please wait a few moments before trying again.'
+        : 'Invalid credentials or login failed. Please check your email and password.';
+      const errorMsg = formatErrorMessage(err, defaultMsg);
       setError(errorMsg);
     } finally {
       isSubmittingRef.current = false;
@@ -416,7 +411,7 @@ const Login = () => {
                 }}
               >
                 <AlertCircle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
-                <span>{error}</span>
+                <span>{typeof error === 'string' ? error : formatErrorMessage(error)}</span>
               </div>
             )}
 

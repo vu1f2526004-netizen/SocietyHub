@@ -2,6 +2,7 @@ import React, { useState, useContext, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { formatErrorMessage } from '../utils/formatError';
 import PublicNavbar from './Public/components/PublicNavbar';
 import {
   KeyRound,
@@ -141,7 +142,7 @@ const JoinSociety = () => {
       setSuccessData(res);
     } catch (err) {
       setServerError(
-        err.response?.data?.error || 'Registration failed. Please check your details and try again.'
+        formatErrorMessage(err, 'Registration failed. Please check your details and try again.')
       );
     } finally {
       setIsSubmitting(false);
@@ -433,7 +434,7 @@ const JoinSociety = () => {
                 }}
               >
                 <AlertCircle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
-                <span>{serverError}</span>
+                <span>{typeof serverError === 'string' ? serverError : formatErrorMessage(serverError)}</span>
               </div>
             )}
 

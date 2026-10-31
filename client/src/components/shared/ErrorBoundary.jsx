@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { formatErrorMessage } from '../../utils/formatError';
 
 /**
  * React Error Boundary that prevents the entire application from blanking
@@ -94,7 +95,9 @@ class ErrorBoundary extends React.Component {
                 overflowX: 'auto'
               }}
             >
-              {this.state.error.message}
+              {typeof this.state.error.message === 'string'
+                ? this.state.error.message
+                : formatErrorMessage(this.state.error.message || this.state.error)}
             </div>
           )}
 

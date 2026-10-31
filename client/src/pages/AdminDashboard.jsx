@@ -2,6 +2,7 @@ import React, { useState, useEffect, useContext, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { formatErrorMessage } from '../utils/formatError';
 import RefreshButton from '../components/shared/RefreshButton';
 import api from '../services/api';
 import { 
@@ -282,7 +283,7 @@ const AdminDashboard = () => {
       }
     } catch (err) {
       console.error('Error fetching dashboard stats:', err);
-      const msg = err.response?.data?.message || err.message || 'Failed to load dashboard statistics';
+      const msg = formatErrorMessage(err, 'Failed to load dashboard statistics');
       setError(msg);
       if (isRefresh) {
         toast.error(msg);
@@ -394,7 +395,7 @@ const AdminDashboard = () => {
             <AlertCircle size={22} color="#dc2626" style={{ flexShrink: 0 }} />
             <div>
               <p style={{ margin: 0, fontWeight: '600', color: '#991b1b', fontSize: '0.925rem' }}>Dashboard Data Warning</p>
-              <p style={{ margin: 0, color: '#b91c1c', fontSize: '0.85rem' }}>{error}</p>
+              <p style={{ margin: 0, color: '#b91c1c', fontSize: '0.85rem' }}>{typeof error === 'string' ? error : formatErrorMessage(error)}</p>
             </div>
           </div>
           <button

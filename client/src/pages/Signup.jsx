@@ -1,6 +1,7 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
+import { formatErrorMessage } from '../utils/formatError';
 import { User, Mail, Phone, Home, Lock, AlertCircle, CheckCircle2, Loader2, Building2 } from 'lucide-react';
 
 const Signup = () => {
@@ -131,7 +132,7 @@ const Signup = () => {
       }, 1500);
 
     } catch (err) {
-      const errorMsg = err.response?.data?.error || err.message || 'Registration failed. Please try again.';
+      const errorMsg = formatErrorMessage(err, 'Registration failed. Please try again.');
       setServerError(errorMsg);
     } finally {
       setIsSubmitting(false);
@@ -243,7 +244,7 @@ const Signup = () => {
             marginBottom: '20px'
           }}>
             <AlertCircle size={18} style={{ flexShrink: 0 }} />
-            <span>{serverError}</span>
+            <span>{typeof serverError === 'string' ? serverError : formatErrorMessage(serverError)}</span>
           </div>
         )}
 

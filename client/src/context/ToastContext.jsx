@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
 import { CheckCircle, AlertCircle, AlertTriangle, Info, X } from 'lucide-react';
+import { formatErrorMessage } from '../utils/formatError';
 
 const ToastContext = createContext(null);
 
@@ -11,7 +12,9 @@ export const ToastProvider = ({ children }) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const addToast = useCallback((type, message, title = '') => {
+  const addToast = useCallback((type, rawMessage, rawTitle = '') => {
+    const message = typeof rawMessage === 'string' ? rawMessage : formatErrorMessage(rawMessage);
+    const title = typeof rawTitle === 'string' ? rawTitle : formatErrorMessage(rawTitle, '');
     const key = `${type}:${title}:${message}`;
     const now = Date.now();
     const lastTime = recentToastsRef.current.get(key) || 0;
@@ -130,7 +133,7 @@ export const ToastProvider = ({ children }) => {
                   </div>
                 )}
                 <div style={{ fontSize: '0.8rem', color: s.textColor, lineHeight: 1.4, wordBreak: 'break-word' }}>
-                  {t.message}
+                  {typeof t.message === 'string' ? t.message : formatErrorMessage(t.message)}
                 </div>
               </div>
               <button

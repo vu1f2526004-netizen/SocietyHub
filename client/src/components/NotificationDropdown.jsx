@@ -13,6 +13,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import api from '../services/api';
+import { formatErrorMessage } from '../utils/formatError';
 
 const NotificationDropdown = ({ userRole = 'Resident' }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -38,7 +39,7 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
       }
     } catch (err) {
       console.error('Failed to load notifications', err);
-      if (!isSilent) setError('Failed to load notifications');
+      if (!isSilent) setError(formatErrorMessage(err, 'Failed to load notifications'));
     } finally {
       if (!isSilent) setLoading(false);
     }
@@ -289,7 +290,7 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
               </div>
             ) : error ? (
               <div style={{ padding: '24px 20px', textAlign: 'center', color: '#ef4444', fontSize: '0.85rem' }}>
-                {error}
+                {typeof error === 'string' ? error : formatErrorMessage(error)}
               </div>
             ) : notifications.length === 0 ? (
               <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--sh-slate-500)' }}>
