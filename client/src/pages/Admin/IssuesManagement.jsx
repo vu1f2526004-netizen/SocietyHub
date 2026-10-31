@@ -1,33 +1,64 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
-import { AlertTriangle, CheckCircle, XCircle, Search, Filter, Image as ImageIcon, MapPin } from 'lucide-react';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
+import { AlertTriangle, CheckCircle, XCircle, Search, Filter, Image as ImageIcon, MapPin, X } from 'lucide-react';
 
 const IssuesManagement = () => {
+  const toast = useToast();
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
 
-  const fetchIssues = async () => {
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  const fetchIssues = useCallback(async (isRefresh = false, overrides = {}) => {
     try {
-      setLoading(true);
-      const res = await api.get('/issues');
-      setIssues(res.data.data);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const activeSearch = overrides.search !== undefined ? overrides.search : debouncedSearch;
+      const activeStatus = overrides.status !== undefined ? overrides.status : filterStatus;
+
+      const params = {};
+      if (activeSearch && activeSearch.trim()) params.search = activeSearch.trim();
+      if (activeStatus && activeStatus !== 'All') params.status = activeStatus;
+
+      const res = await api.get('/issues', { params });
+      setIssues(res.data?.data || []);
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh community issues');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [debouncedSearch, filterStatus, toast]);
 
-  useEffect(() => { fetchIssues(); }, []);
+  useEffect(() => { 
+    fetchIssues(); 
+  }, [fetchIssues]);
 
   const updateStatus = async (id, status) => {
     try {
       await api.patch(`/issues/admin/${id}`, { status });
-      fetchIssues();
+      toast.success(`Issue status updated to ${status}`);
+      fetchIssues(true);
     } catch (err) {
-      alert('Failed to update issue status');
+      toast.error(err.response?.data?.error || 'Failed to update issue status');
     }
   };
 
@@ -48,15 +79,27 @@ const IssuesManagement = () => {
     return matchesSearch && matchesStatus;
   });
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading issues...</div></div>;
+  if (loading && issues.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading issues...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Community Issues & Parking</h2>
           <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Review and approve resident-reported community issues</p>
         </div>
+        <RefreshButton
+          onClick={() => fetchIssues(true)}
+          refreshing={refreshing}
+          loading={loading && issues.length === 0}
+          title="Refresh community issues"
+        />
       </div>
 
       <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
@@ -67,8 +110,32 @@ const IssuesManagement = () => {
             placeholder="Search by title, type, or reporter..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
+            style={{ width: '100%', padding: '10px 36px 10px 40px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
           />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+                fetchIssues(false, { search: '' });
+              }}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                right: '10px',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#94a3b8',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+              title="Clear search"
+            >
+              <X size={16} />
+            </button>
+          )}
         </div>
         <div style={{ position: 'relative', minWidth: '200px' }}>
           <Filter size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />

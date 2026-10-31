@@ -1,17 +1,29 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
 import { CheckCircle, AlertCircle, AlertTriangle, Info, X } from 'lucide-react';
 
 const ToastContext = createContext(null);
 
 export const ToastProvider = ({ children }) => {
   const [toasts, setToasts] = useState([]);
+  const recentToastsRef = useRef(new Map());
 
   const removeToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   const addToast = useCallback((type, message, title = '') => {
-    const id = Date.now() + Math.random().toString(36).substring(2, 7);
+    const key = `${type}:${title}:${message}`;
+    const now = Date.now();
+    const lastTime = recentToastsRef.current.get(key) || 0;
+    if (now - lastTime < 1500) {
+      return; // Deduplicate identical toasts fired in rapid succession
+    }
+    recentToastsRef.current.set(key, now);
+    setTimeout(() => {
+      recentToastsRef.current.delete(key);
+    }, 4500);
+
+    const id = now + Math.random().toString(36).substring(2, 7);
     const newToast = { id, type, message, title };
 
     setToasts((prev) => [...prev, newToast]);
@@ -22,12 +34,12 @@ export const ToastProvider = ({ children }) => {
     }, 4500);
   }, [removeToast]);
 
-  const toast = {
+  const toast = useMemo(() => ({
     success: (message, title = 'Success') => addToast('success', message, title),
     error: (message, title = 'Error') => addToast('error', message, title),
     warning: (message, title = 'Warning') => addToast('warning', message, title),
     info: (message, title = 'Notice') => addToast('info', message, title),
-  };
+  }), [addToast]);
 
   const getToastStyles = (type) => {
     switch (type) {

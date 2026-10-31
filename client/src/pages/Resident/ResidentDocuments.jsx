@@ -1,26 +1,56 @@
-import React, { useState, useEffect } from 'react';
-import api from '../../services/api';
-import { FileText, Download, Folder, File, ExternalLink, Calendar } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import api, { getAuthToken, getApiBaseUrl } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
+import { FileText, Download, Folder, File, ExternalLink, Calendar, Search, X } from 'lucide-react';
 
 const ResidentDocuments = () => {
+  const toast = useToast();
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
 
+  // Debounce search input (300ms)
   useEffect(() => {
-    const fetchDocs = async () => {
-      try {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  const fetchDocs = useCallback(async (isRefresh = false, searchOverride) => {
+    try {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
         setLoading(true);
-        const res = await api.get('/documents');
-        setDocs(res.data.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
       }
-    };
+      const activeSearch = searchOverride !== undefined ? searchOverride : debouncedSearch;
+      const params = {};
+      if (activeSearch && activeSearch.trim()) params.search = activeSearch.trim();
+
+      const res = await api.get('/documents', { params });
+      setDocs(res.data?.data || []);
+      if (isRefresh) {
+        toast.success('Documents updated');
+      }
+    } catch (err) {
+      console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh documents');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [debouncedSearch, toast]);
+
+  useEffect(() => {
     fetchDocs();
-  }, []);
+  }, [fetchDocs]);
 
   const categories = ['All', ...new Set(docs.map(d => d.category))];
   
@@ -43,18 +73,79 @@ const ResidentDocuments = () => {
     if (doc.url && /\.(jpg|jpeg|png|webp)$/i.test(doc.url)) {
       return doc.url;
     }
-    const token = localStorage.getItem('token');
-    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+    const token = getAuthToken() || localStorage.getItem('token');
+    const apiBase = getApiBaseUrl();
     return `${apiBase}/documents/${doc._id}/file?token=${encodeURIComponent(token || '')}`;
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading documents...</div></div>;
+  if (loading && docs.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading documents...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-      <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Society Documents</h2>
-        <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Access important community files and notices</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Society Documents</h2>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Access important community files and notices</p>
+        </div>
+        <RefreshButton onRefresh={() => fetchDocs(true)} loading={refreshing} title="Refresh documents" />
+      </div>
+
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center' }}>
+        <div style={{ position: 'relative', flex: 1, maxWidth: '420px' }}>
+          <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '11px', left: '12px' }} />
+          <input
+            type="text"
+            placeholder="Search documents by title or category..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px 36px 10px 38px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              fontSize: '0.875rem',
+              outline: 'none',
+              backgroundColor: '#ffffff'
+            }}
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+                setDebouncedSearch('');
+                fetchDocs(false, '');
+              }}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                right: '10px',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#94a3b8',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+              title="Clear search"
+              aria-label="Clear search"
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
+        {searchTerm && (
+          <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
+            Found {filteredDocs.length} document{filteredDocs.length === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', overflowX: 'auto', paddingBottom: '8px' }}>

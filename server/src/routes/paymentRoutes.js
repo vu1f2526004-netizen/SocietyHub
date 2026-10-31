@@ -3,8 +3,11 @@ const { verifyToken, requireRoles } = require('../middleware/auth');
 const {
   createOrder,
   verifyPayment,
+  getPaymentReceipt,
   getMyPayments,
+  getMyPaymentsSummary,
   getAdminPayments,
+  getAdminPaymentsSummary,
   handleRazorpayWebhook
 } = require('../controllers/paymentController');
 
@@ -19,7 +22,10 @@ router.use(verifyToken);
 
 router.post('/create-order', requireRoles('Resident'), createOrder);
 router.post('/verify', requireRoles('Resident'), verifyPayment);
+router.get('/my/summary', requireRoles('Resident'), getMyPaymentsSummary);
 router.get('/my', requireRoles('Resident'), getMyPayments);
+router.get('/admin/summary', requireRoles('Admin'), getAdminPaymentsSummary);
 router.get('/admin', requireRoles('Admin'), getAdminPayments);
+router.get('/:id/receipt', requireRoles('Resident', 'Admin'), getPaymentReceipt);
 
 module.exports = router;

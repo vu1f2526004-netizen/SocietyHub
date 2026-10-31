@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
 import FileUpload from '../../components/shared/FileUpload';
 import { Car, MapPin, AlignLeft, Camera, Send, AlertCircle } from 'lucide-react';
 
 const ParkingObservations = () => {
+  const toast = useToast();
   const [formData, setFormData] = useState({ issueType: 'Parking', title: '', description: '', location: '', vehicleNumber: '' });
   const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     try {
       setSubmitting(true);
       const data = new FormData();
@@ -18,11 +21,11 @@ const ParkingObservations = () => {
 
       await api.post('/issues', data);
       
-      alert('Parking observation reported successfully. Admin will review it.');
+      toast.success('Parking observation reported successfully. Admin will review it.');
       setFormData({ issueType: 'Parking', title: '', description: '', location: '', vehicleNumber: '' });
       setFile(null);
     } catch (err) {
-      alert('Failed to report parking observation');
+      toast.error('Failed to report parking observation');
     } finally {
       setSubmitting(false);
     }

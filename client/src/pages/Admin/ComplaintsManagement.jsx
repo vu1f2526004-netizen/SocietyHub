@@ -1,41 +1,79 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../services/api';
 import { useToast } from '../../context/ToastContext';
-import { MessageSquareWarning, Search, Eye, Filter, CheckCircle, Clock } from 'lucide-react';
+import RefreshButton from '../../components/shared/RefreshButton';
+import { MessageSquareWarning, Search, Eye, Filter, CheckCircle, Clock, X } from 'lucide-react';
 
 const ComplaintsManagement = () => {
   const toast = useToast();
   const [complaints, setComplaints] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
+  const [viewModalComplaint, setViewModalComplaint] = useState(null);
+
+  // 300ms debounce
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  const fetchComplaints = useCallback(async (isRefresh = false, overrides = {}) => {
+    try {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      const activeSearch = overrides.search !== undefined ? overrides.search : debouncedSearch;
+      const activeStatus = overrides.status !== undefined ? overrides.status : filterStatus;
+
+      const params = {};
+      if (activeSearch && activeSearch.trim()) params.search = activeSearch.trim();
+      if (activeStatus && activeStatus !== 'All') params.status = activeStatus;
+
+      const res = await api.get('/complaints/admin', { params });
+      setComplaints(res.data?.data || []);
+    } catch (err) {
+      console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh complaints');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [debouncedSearch, filterStatus, toast]);
+
+  const fetchStaff = useCallback(async () => {
+    try {
+      const res = await api.get('/users');
+      setStaff((res.data?.data || []).filter(u => u.role === 'SecurityStaff'));
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
 
   useEffect(() => {
     fetchComplaints();
     fetchStaff();
-  }, []);
+  }, [fetchStaff]);
 
-  const fetchComplaints = async () => {
-    try {
-      setLoading(true);
-      const res = await api.get('/complaints/admin');
-      setComplaints(res.data.data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
+  // Refetch when search or status filter changes
+  const isFirstMountRef = useRef(true);
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
     }
-  };
-
-  const fetchStaff = async () => {
-    try {
-      const res = await api.get('/users');
-      setStaff(res.data.data.filter(u => u.role === 'SecurityStaff'));
-    } catch (err) {
-      console.error(err);
-    }
-  };
+    fetchComplaints(false, { search: debouncedSearch, status: filterStatus });
+  }, [debouncedSearch, filterStatus]);
 
   const updateComplaint = async (id, updates) => {
     try {
@@ -66,27 +104,61 @@ const ComplaintsManagement = () => {
     return matchesSearch && matchesStatus;
   });
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading complaints...</div></div>;
+  if (loading && complaints.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading complaints...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Complaints Management</h2>
           <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Review, assign, and track resident complaints</p>
         </div>
+        <RefreshButton
+          onClick={() => fetchComplaints(true)}
+          refreshing={refreshing}
+          loading={loading && complaints.length === 0}
+          title="Refresh complaints"
+        />
       </div>
 
       <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: '250px' }}>
-          <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />
+          <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '11px', left: '12px' }} />
           <input 
             type="text" 
             placeholder="Search by title, resident, or flat..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
+            style={{ width: '100%', padding: '10px 36px 10px 40px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
           />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              style={{
+                position: 'absolute',
+                right: '10px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                color: '#94a3b8',
+                cursor: 'pointer',
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+              title="Clear search"
+            >
+              <X size={16} />
+            </button>
+          )}
         </div>
         <div style={{ position: 'relative', minWidth: '200px' }}>
           <Filter size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />
@@ -166,7 +238,7 @@ const ComplaintsManagement = () => {
                       </td>
                       <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                         <button 
-                          onClick={() => alert(`Location: ${c.location}\nDescription: ${c.description}\nReported: ${new Date(c.createdAt).toLocaleString()}`)}
+                          onClick={() => setViewModalComplaint(c)}
                           style={{ background: 'transparent', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '6px 12px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.875rem', color: '#334155', fontWeight: '500' }}
                           onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8fafc'}
                           onMouseOut={e => e.currentTarget.style.backgroundColor = 'transparent'}
@@ -182,6 +254,32 @@ const ComplaintsManagement = () => {
           </div>
         )}
       </div>
+
+      {viewModalComplaint && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '16px', maxWidth: '520px', width: '100%', padding: '28px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)' }}>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '1.25rem', fontWeight: '700', color: '#0f172a' }}>{viewModalComplaint.title}</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '0.875rem', color: '#334155' }}>
+              <div><strong>Resident:</strong> {viewModalComplaint.residentId?.name} ({viewModalComplaint.residentId?.flatNumber || 'N/A'})</div>
+              <div><strong>Location:</strong> {viewModalComplaint.location || 'Not specified'}</div>
+              <div><strong>Category:</strong> {viewModalComplaint.category}</div>
+              <div><strong>Reported:</strong> {new Date(viewModalComplaint.createdAt).toLocaleString()}</div>
+              <div><strong>Description:</strong></div>
+              <div style={{ padding: '12px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', lineHeight: 1.5 }}>
+                {viewModalComplaint.description}
+              </div>
+            </div>
+            <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button 
+                onClick={() => setViewModalComplaint(null)}
+                style={{ padding: '10px 20px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

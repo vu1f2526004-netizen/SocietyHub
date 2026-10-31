@@ -3,6 +3,8 @@ const ErrorResponse = require('../utils/errorResponse');
 const Finance = require('../models/Finance');
 const MaintenanceBill = require('../models/MaintenanceBill');
 const Payment = require('../models/Payment');
+const User = require('../models/User');
+const { resolveDateRange } = require('../utils/dateRangeHelper');
 
 // @desc      Create finance record (Expense or Income)
 // @route     POST /api/finance/admin
@@ -165,7 +167,7 @@ exports.deleteFinanceRecord = async (req, res, next) => {
   }
 };
 
-// @desc      Get admin finance records with filtering
+// @desc      Get admin finance records with filtering and pagination
 // @route     GET /api/finance/admin
 // @access    Private (Admin only)
 exports.getAdminFinance = async (req, res, next) => {
@@ -186,33 +188,92 @@ exports.getAdminFinance = async (req, res, next) => {
       filter.paymentStatus = req.query.paymentStatus;
     }
 
-    if (req.query.month && req.query.month !== 'ALL') {
-      const [year, month] = req.query.month.split('-').map(Number);
-      if (year && month) {
-        filter.date = {
-          $gte: new Date(year, month - 1, 1, 0, 0, 0, 0),
-          $lte: new Date(year, month, 0, 23, 59, 59, 999)
-        };
-      }
+    // Comprehensive period and date range resolution
+    const dateFilter = resolveDateRange(req.query);
+    if (!dateFilter.isAllTime) {
+      filter.date = {
+        $gte: dateFilter.startDate,
+        $lte: dateFilter.endDate
+      };
     }
 
-    if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search.trim(), 'i');
-      filter.$or = [
+    if (req.query.search && req.query.search.trim()) {
+      const escaped = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escaped, 'i');
+
+      const matchingResidents = await User.find({
+        societyId: { $in: [societyObjId, rawSocietyId.toString()] },
+        $or: [
+          { name: searchRegex },
+          { email: searchRegex },
+          { flatNumber: searchRegex }
+        ]
+      }).select('_id');
+      const matchingResidentIds = matchingResidents.map(r => r._id);
+
+      const paymentSearchOr = [
+        { receiptNumber: searchRegex },
+        { razorpayPaymentId: searchRegex },
+        { razorpayOrderId: searchRegex }
+      ];
+      if (matchingResidentIds.length > 0) {
+        paymentSearchOr.push({ residentId: { $in: matchingResidentIds } });
+      }
+
+      const matchingPayments = await Payment.find({
+        societyId: { $in: [societyObjId, rawSocietyId.toString()] },
+        $or: paymentSearchOr
+      }).select('_id');
+      const matchingPaymentIds = matchingPayments.map(p => p._id);
+
+      const searchOr = [
         { title: searchRegex },
         { description: searchRegex },
         { vendor: searchRegex },
         { referenceNumber: searchRegex },
         { category: searchRegex }
       ];
+
+      if (matchingPaymentIds.length > 0) {
+        searchOr.push({ referenceId: { $in: matchingPaymentIds } });
+      }
+
+      filter.$or = searchOr;
     }
 
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const totalCount = await Finance.countDocuments(filter);
     const records = await Finance.find(filter)
       .populate('recordedBy', 'name email')
       .populate('updatedBy', 'name email')
-      .sort({ date: -1, createdAt: -1 });
+      .populate({
+        path: 'referenceId',
+        select: 'amount razorpayPaymentId razorpayOrderId paidAt status receiptNumber residentId billId',
+        populate: [
+          { path: 'residentId', select: 'name email flatNumber' },
+          { path: 'billId', select: 'month amount dueDate' }
+        ]
+      })
+      .sort({ date: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
-    res.status(200).json({ success: true, count: records.length, data: records });
+    res.status(200).json({ 
+      success: true, 
+      count: records.length, 
+      totalCount,
+      pagination: {
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit) || 1,
+        totalCount
+      },
+      periodLabel: dateFilter.periodLabel,
+      data: records 
+    });
   } catch (err) {
     next(err);
   }
@@ -233,31 +294,14 @@ exports.getSocietyTransparency = async (req, res, next) => {
       : rawSocietyId;
     const societyMatch = { $in: [societyObjId, rawSocietyId.toString()] };
 
-    // Determine date range filter
+    // Determine date range filter using unified resolveDateRange helper
     const now = new Date();
-    let startDate;
-    let endDate;
-    let hasDateFilter = false;
-    let currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    let selectedMonth = req.query.month || currentMonthKey;
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const dateFilter = resolveDateRange(req.query);
+    const { isAllTime, startDate, endDate, periodLabel, monthKey } = dateFilter;
+    const selectedMonth = monthKey || (isAllTime ? 'ALL' : (req.query.period === 'custom' ? 'CUSTOM' : currentMonthKey));
 
-    if (req.query.startDate && req.query.endDate) {
-      startDate = new Date(req.query.startDate);
-      startDate.setHours(0, 0, 0, 0);
-      endDate = new Date(req.query.endDate);
-      endDate.setHours(23, 59, 59, 999);
-      hasDateFilter = true;
-      selectedMonth = 'CUSTOM';
-    } else if (selectedMonth !== 'ALL') {
-      const [year, month] = selectedMonth.split('-').map(Number);
-      if (year && month) {
-        startDate = new Date(year, month - 1, 1, 0, 0, 0, 0);
-        endDate = new Date(year, month, 0, 23, 59, 59, 999);
-        hasDateFilter = true;
-      }
-    }
-
-    const dateQuery = hasDateFilter ? { date: { $gte: startDate, $lte: endDate } } : {};
+    const dateQuery = isAllTime ? {} : { date: { $gte: startDate, $lte: endDate } };
 
     // 1. Total Confirmed Collected Maintenance Income for this period
     const incomeAgg = await Finance.aggregate([
@@ -305,6 +349,21 @@ exports.getSocietyTransparency = async (req, res, next) => {
     // Net Operational Balance = Collected Income - Paid Expenses
     const netOperationalBalance = totalCollectedIncome - totalPaidExpenses;
 
+    // Opening and Closing Balances for selected period (calculated from reliable prior financial records)
+    let openingBalance = 0;
+    if (!isAllTime && startDate) {
+      const priorIncomeAgg = await Finance.aggregate([
+        { $match: { societyId: societyMatch, type: 'Income', date: { $lt: startDate } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const priorPaidExpensesAgg = await Finance.aggregate([
+        { $match: { societyId: societyMatch, type: 'Expense', paymentStatus: { $ne: 'Pending' }, date: { $lt: startDate } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      openingBalance = (priorIncomeAgg[0]?.total || 0) - (priorPaidExpensesAgg[0]?.total || 0);
+    }
+    const closingBalance = openingBalance + totalCollectedIncome - totalPaidExpenses;
+
     // 4. Expenses by Category
     const categoryBreakdownAgg = await Finance.aggregate([
       { $match: { societyId: societyMatch, type: 'Expense', ...dateQuery } },
@@ -333,15 +392,22 @@ exports.getSocietyTransparency = async (req, res, next) => {
       expenseFilter.paymentStatus = req.query.paymentStatus;
     }
 
-    if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search.trim(), 'i');
-      expenseFilter.$or = [
+    if (req.query.search && req.query.search.trim()) {
+      const escaped = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escaped, 'i');
+      const searchOr = [
         { title: searchRegex },
         { description: searchRegex },
         { vendor: searchRegex },
         { referenceNumber: searchRegex },
-        { category: searchRegex }
+        { category: searchRegex },
+        { paymentStatus: searchRegex }
       ];
+      const parsedNum = parseFloat(req.query.search.trim());
+      if (!isNaN(parsedNum)) {
+        searchOr.push({ amount: parsedNum });
+      }
+      expenseFilter.$or = searchOr;
     }
 
     const rawExpenses = await Finance.find(expenseFilter)
@@ -380,6 +446,7 @@ exports.getSocietyTransparency = async (req, res, next) => {
 
     const monthsSet = new Set(distinctMonthsAgg.map(m => m._id).filter(Boolean));
     monthsSet.add(currentMonthKey);
+    if (dateFilter.monthKey) monthsSet.add(dateFilter.monthKey);
     const availableMonths = Array.from(monthsSet).sort().reverse();
 
     // Distinct categories for filters
@@ -388,16 +455,21 @@ exports.getSocietyTransparency = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
+        transparencyNotice: "Society-wide financial information — informational transparency, not your personal payable dues.",
         summary: {
+          periodLabel,
           selectedMonth,
           currentMonthKey,
+          openingBalance,
           totalCollectedIncome,
           incomeTransactionsCount,
           totalRecordedExpenses,
           totalPaidExpenses,
           totalPendingExpenses,
           expenseRecordsCount,
-          netOperationalBalance
+          netOperationalBalance,
+          closingBalance,
+          transparencyNotice: "Society-wide financial information — informational transparency, not your personal payable dues."
         },
         categoryBreakdown: categoryBreakdownAgg.map(c => ({
           category: c._id,
@@ -406,6 +478,7 @@ exports.getSocietyTransparency = async (req, res, next) => {
         })),
         expenses: sanitizedExpenses,
         availableMonths,
+        availableYears: Array.from(new Set(availableMonths.map(m => parseInt(m.split('-')[0], 10)))).sort().reverse(),
         availableCategories: distinctCategoriesAgg,
         accountingRules: {
           incomeDefinition: 'Only verified and confirmed member payment receipts in this period',
@@ -421,7 +494,7 @@ exports.getSocietyTransparency = async (req, res, next) => {
   }
 };
 
-// @desc      Get admin finance summary
+// @desc      Get admin finance summary with flexible period filtering
 // @route     GET /api/finance/admin/summary
 // @access    Private (Admin only)
 exports.getFinanceSummary = async (req, res, next) => {
@@ -433,27 +506,52 @@ exports.getFinanceSummary = async (req, res, next) => {
     const societyMatch = { $in: [societyObjId, rawSocietyId.toString()] };
 
     const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
     const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
-    // 1. All-time Income
-    const incomeAgg = await Finance.aggregate([
+    // 1. Resolve selected period from query parameters
+    const dateFilter = resolveDateRange(req.query);
+    const { isAllTime, startDate, endDate, periodLabel, billingMonth, monthKey, year } = dateFilter;
+
+    const periodDateQuery = isAllTime ? {} : { date: { $gte: startDate, $lte: endDate } };
+    const paymentPeriodDateQuery = isAllTime ? {} : {
+      $or: [
+        { paidAt: { $gte: startDate, $lte: endDate } },
+        { paidAt: null, createdAt: { $gte: startDate, $lte: endDate } }
+      ]
+    };
+    const paymentFailedPeriodQuery = isAllTime ? {} : {
+      $or: [
+        { updatedAt: { $gte: startDate, $lte: endDate } },
+        { createdAt: { $gte: startDate, $lte: endDate } }
+      ]
+    };
+
+    const billPeriodQuery = billingMonth 
+      ? { month: billingMonth }
+      : (isAllTime ? {} : {
+          $or: [
+            { dueDate: { $gte: startDate, $lte: endDate } },
+            { createdAt: { $gte: startDate, $lte: endDate } }
+          ]
+        });
+
+    // 2. All-Time (Lifetime) Metrics
+    const lifetimeIncomeAgg = await Finance.aggregate([
       { $match: { societyId: societyMatch, type: 'Income' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
     ]);
-    const totalIncome = incomeAgg[0]?.total || 0;
+    const lifetimeIncome = lifetimeIncomeAgg[0]?.total || 0;
 
-    // 2. All-time Expense
-    const expenseAgg = await Finance.aggregate([
+    const lifetimeExpenseAgg = await Finance.aggregate([
       { $match: { societyId: societyMatch, type: 'Expense' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
     ]);
-    const totalExpense = expenseAgg[0]?.total || 0;
+    const lifetimeExpense = lifetimeExpenseAgg[0]?.total || 0;
+    const lifetimeNetBalance = lifetimeIncome - lifetimeExpense;
 
-    const netBalance = totalIncome - totalExpense;
-
-    // 4. Pending Maintenance Dues
-    const pendingBillsAgg = await MaintenanceBill.aggregate([
+    const lifetimePendingBillsAgg = await MaintenanceBill.aggregate([
       { 
         $match: { 
           societyId: societyMatch, 
@@ -462,10 +560,62 @@ exports.getFinanceSummary = async (req, res, next) => {
       },
       { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
     ]);
-    const pendingDues = pendingBillsAgg[0]?.total || 0;
-    const pendingBillsCount = pendingBillsAgg[0]?.count || 0;
+    const lifetimePendingDues = lifetimePendingBillsAgg[0]?.total || 0;
+    const lifetimePendingBillsCount = lifetimePendingBillsAgg[0]?.count || 0;
 
-    // 5. Current Month Income
+    const lifetimeSuccessfulPaymentsCount = await Payment.countDocuments({
+      societyId: societyMatch,
+      status: 'Success'
+    });
+    const lifetimeFailedPaymentsCount = await Payment.countDocuments({
+      societyId: societyMatch,
+      status: 'Failed'
+    });
+
+    // 3. Selected Period Metrics
+    const periodIncomeAgg = await Finance.aggregate([
+      { $match: { societyId: societyMatch, type: 'Income', ...periodDateQuery } },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const periodIncome = isAllTime ? lifetimeIncome : (periodIncomeAgg[0]?.total || 0);
+
+    const periodExpenseAgg = await Finance.aggregate([
+      { $match: { societyId: societyMatch, type: 'Expense', ...periodDateQuery } },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const periodExpense = isAllTime ? lifetimeExpense : (periodExpenseAgg[0]?.total || 0);
+    const periodNetBalance = periodIncome - periodExpense;
+
+    const periodPendingBillsAgg = await MaintenanceBill.aggregate([
+      { 
+        $match: { 
+          societyId: societyMatch, 
+          status: { $in: ['Pending', 'PaymentInitiated', 'Overdue', 'Failed'] },
+          ...billPeriodQuery
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const periodPendingDues = isAllTime ? lifetimePendingDues : (periodPendingBillsAgg[0]?.total || 0);
+    const periodPendingBillsCount = isAllTime ? lifetimePendingBillsCount : (periodPendingBillsAgg[0]?.count || 0);
+
+    const periodSuccessfulPaymentsCount = isAllTime 
+      ? lifetimeSuccessfulPaymentsCount 
+      : await Payment.countDocuments({
+          societyId: societyMatch,
+          status: 'Success',
+          ...paymentPeriodDateQuery
+        });
+
+    const periodFailedPaymentsCount = isAllTime 
+      ? lifetimeFailedPaymentsCount 
+      : await Payment.countDocuments({
+          societyId: societyMatch,
+          status: 'Failed',
+          ...paymentFailedPeriodQuery
+        });
+
+    // 4. Current Calendar Month Performance
     const currentMonthIncomeAgg = await Finance.aggregate([
       { 
         $match: { 
@@ -478,7 +628,6 @@ exports.getFinanceSummary = async (req, res, next) => {
     ]);
     const currentMonthIncome = currentMonthIncomeAgg[0]?.total || 0;
 
-    // 6. Current Month Expense
     const currentMonthExpenseAgg = await Finance.aggregate([
       { 
         $match: { 
@@ -490,16 +639,16 @@ exports.getFinanceSummary = async (req, res, next) => {
       { $group: { _id: null, total: { $sum: '$amount' } } }
     ]);
     const currentMonthExpense = currentMonthExpenseAgg[0]?.total || 0;
-
     const currentMonthNetBalance = currentMonthIncome - currentMonthExpense;
 
-    // Expenses by Category
+    // 5. Expenses by Category for Period
     const byCategory = await Finance.aggregate([
-      { $match: { societyId: societyMatch, type: 'Expense' } },
-      { $group: { _id: '$category', total: { $sum: '$amount' } } }
+      { $match: { societyId: societyMatch, type: 'Expense', ...periodDateQuery } },
+      { $group: { _id: '$category', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      { $sort: { total: -1 } }
     ]);
 
-    // Group monthly income
+    // 6. Grouped Monthly Reports
     const monthlyIncomeAgg = await Finance.aggregate([
       { $match: { societyId: societyMatch, type: 'Income' } },
       { 
@@ -510,7 +659,6 @@ exports.getFinanceSummary = async (req, res, next) => {
       }
     ]);
 
-    // Group monthly expense
     const monthlyExpenseAgg = await Finance.aggregate([
       { $match: { societyId: societyMatch, type: 'Expense' } },
       { 
@@ -521,7 +669,6 @@ exports.getFinanceSummary = async (req, res, next) => {
       }
     ]);
 
-    // Monthly payments
     const monthlyPaymentsAgg = await Payment.aggregate([
       { $match: { societyId: societyMatch, status: 'Success' } },
       {
@@ -538,7 +685,6 @@ exports.getFinanceSummary = async (req, res, next) => {
       }
     ]);
 
-    // Monthly pending bills
     const monthlyPendingBillsAgg = await MaintenanceBill.aggregate([
       { 
         $match: { 
@@ -556,8 +702,10 @@ exports.getFinanceSummary = async (req, res, next) => {
     ]);
 
     const monthSet = new Set();
-    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     monthSet.add(currentMonthKey);
+    if (dateFilter.monthKey) {
+      monthSet.add(dateFilter.monthKey);
+    }
 
     [monthlyIncomeAgg, monthlyExpenseAgg, monthlyPaymentsAgg, monthlyPendingBillsAgg].forEach(list => {
       list.forEach(item => {
@@ -584,20 +732,49 @@ exports.getFinanceSummary = async (req, res, next) => {
       };
     });
 
+    const availableMonths = sortedMonths;
+    const availableYears = Array.from(new Set(sortedMonths.map(m => parseInt(m.split('-')[0], 10)))).sort().reverse();
+
     res.status(200).json({
       success: true,
       data: {
-        totalIncome,
-        totalExpense,
-        netBalance,
-        pendingDues,
-        pendingBillsCount,
+        periodSummary: {
+          period: req.query.period || (isAllTime ? 'all' : 'custom'),
+          periodLabel,
+          isAllTime,
+          startDate,
+          endDate,
+          totalIncome: periodIncome,
+          totalExpense: periodExpense,
+          netBalance: periodNetBalance,
+          pendingDues: periodPendingDues,
+          pendingBillsCount: periodPendingBillsCount,
+          successfulTransactionsCount: periodSuccessfulPaymentsCount,
+          failedTransactionsCount: periodFailedPaymentsCount
+        },
+        lifetimeSummary: {
+          totalIncome: lifetimeIncome,
+          totalExpense: lifetimeExpense,
+          netBalance: lifetimeNetBalance,
+          pendingDues: lifetimePendingDues,
+          pendingBillsCount: lifetimePendingBillsCount,
+          successfulPaymentsCount: lifetimeSuccessfulPaymentsCount,
+          failedPaymentsCount: lifetimeFailedPaymentsCount
+        },
+        expenseByCategory: byCategory,
+        monthlyReport,
+        availableMonths,
+        availableYears,
+        currentMonthKey,
+        // Backward-compatibility keys for legacy callers
+        totalIncome: isAllTime ? lifetimeIncome : periodIncome,
+        totalExpense: isAllTime ? lifetimeExpense : periodExpense,
+        netBalance: isAllTime ? lifetimeNetBalance : periodNetBalance,
+        pendingDues: isAllTime ? lifetimePendingDues : periodPendingDues,
+        pendingBillsCount: isAllTime ? lifetimePendingBillsCount : periodPendingBillsCount,
         currentMonthIncome,
         currentMonthExpense,
         currentMonthNetBalance,
-        expenseByCategory: byCategory,
-        monthlyReport,
-        currentMonthKey,
         accountingRules: {
           incomeSource: 'Verified financial ledger receipts and confirmed online payments',
           expenseSource: 'Recorded society administrative and operational expenditures',
@@ -605,6 +782,197 @@ exports.getFinanceSummary = async (req, res, next) => {
           pendingDuesRule: 'Outstanding maintenance bills (Pending, PaymentInitiated, Overdue, Failed); excludes Paid bills',
           isolation: 'Strict multi-society tenant isolation scoped by authenticated societyId'
         }
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc      Get resident personal finance and payment summary for selected period
+// @route     GET /api/finance/resident/summary
+// @access    Private (Resident only, strictly scoped to residentId & societyId)
+exports.getResidentFinanceSummary = async (req, res, next) => {
+  try {
+    const rawSocietyId = req.user.societyId;
+    const residentId = req.user.id;
+    const societyObjId = mongoose.Types.ObjectId.isValid(rawSocietyId) 
+      ? new mongoose.Types.ObjectId(rawSocietyId) 
+      : rawSocietyId;
+    const societyMatch = { $in: [societyObjId, rawSocietyId.toString()] };
+
+    const dateFilter = resolveDateRange(req.query);
+    const { isAllTime, startDate, endDate, periodLabel, billingMonth, monthKey, year } = dateFilter;
+
+    const paymentDateMatch = isAllTime ? {} : {
+      $or: [
+        { paidAt: { $gte: startDate, $lte: endDate } },
+        { paidAt: null, createdAt: { $gte: startDate, $lte: endDate } }
+      ]
+    };
+
+    const billPeriodMatch = billingMonth 
+      ? { month: billingMonth }
+      : (isAllTime ? {} : {
+          $or: [
+            { dueDate: { $gte: startDate, $lte: endDate } },
+            { createdAt: { $gte: startDate, $lte: endDate } }
+          ]
+        });
+
+    // 1. Period Paid Amount & Successful Payments Count
+    const paidAgg = await Payment.aggregate([
+      { 
+        $match: { 
+          societyId: societyMatch, 
+          residentId: new mongoose.Types.ObjectId(residentId), 
+          status: 'Success', 
+          ...paymentDateMatch 
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const periodTotalPaid = paidAgg[0]?.total || 0;
+    const periodSuccessfulPaymentsCount = paidAgg[0]?.count || 0;
+
+    // 2. Period Failed Payments Count
+    const failedPaymentMatch = isAllTime ? {} : {
+      $or: [
+        { updatedAt: { $gte: startDate, $lte: endDate } },
+        { createdAt: { $gte: startDate, $lte: endDate } }
+      ]
+    };
+    const periodFailedPaymentsCount = await Payment.countDocuments({
+      societyId: societyMatch,
+      residentId,
+      status: 'Failed',
+      ...failedPaymentMatch
+    });
+
+    // 3. Period Pending Dues & Unpaid Bills Count
+    const pendingBillsAgg = await MaintenanceBill.aggregate([
+      { 
+        $match: { 
+          societyId: societyMatch, 
+          residentId: new mongoose.Types.ObjectId(residentId), 
+          status: { $in: ['Pending', 'PaymentInitiated', 'Overdue', 'Failed'] }, 
+          ...billPeriodMatch 
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const periodPendingDues = pendingBillsAgg[0]?.total || 0;
+    const periodPendingBillsCount = pendingBillsAgg[0]?.count || 0;
+
+    // 4. Lifetime Totals for Resident
+    const lifetimePaidAgg = await Payment.aggregate([
+      { 
+        $match: { 
+          societyId: societyMatch, 
+          residentId: new mongoose.Types.ObjectId(residentId), 
+          status: 'Success' 
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const lifetimeTotalPaid = lifetimePaidAgg[0]?.total || 0;
+    const lifetimeSuccessfulPaymentsCount = lifetimePaidAgg[0]?.count || 0;
+
+    const lifetimePendingAgg = await MaintenanceBill.aggregate([
+      { 
+        $match: { 
+          societyId: societyMatch, 
+          residentId: new mongoose.Types.ObjectId(residentId), 
+          status: { $in: ['Pending', 'PaymentInitiated', 'Overdue', 'Failed'] } 
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const lifetimePendingDues = lifetimePendingAgg[0]?.total || 0;
+    const lifetimePendingBillsCount = lifetimePendingAgg[0]?.count || 0;
+
+    // Distinct available months for this resident
+    const residentMonthsAgg = await Payment.aggregate([
+      { $match: { societyId: societyMatch, residentId: new mongoose.Types.ObjectId(residentId) } },
+      { 
+        $group: { 
+          _id: { $dateToString: { format: "%Y-%m", date: { $ifNull: ["$paidAt", "$createdAt"] } } } 
+        } 
+      }
+    ]);
+    const residentBillMonthsAgg = await MaintenanceBill.aggregate([
+      { $match: { societyId: societyMatch, residentId: new mongoose.Types.ObjectId(residentId) } },
+      { 
+        $group: { 
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } } 
+        } 
+      }
+    ]);
+
+    const mSet = new Set();
+    const now = new Date();
+    mSet.add(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+    [residentMonthsAgg, residentBillMonthsAgg].forEach(list => {
+      list.forEach(i => { if (i._id) mSet.add(i._id); });
+    });
+    const availableMonths = Array.from(mSet).sort().reverse();
+    const availableYears = Array.from(new Set(availableMonths.map(m => parseInt(m.split('-')[0], 10)))).sort().reverse();
+
+    // Resident onboarding and financial responsibility tracking
+    const residentUser = await User.findById(residentId).select('name flatNumber financialEffectiveDate createdAt hasTransferredArrears transferredArrearsNotes');
+
+    // Separated calculation of legitimate regular maintenance dues vs authorized transferred arrears
+    const transferredAgg = await MaintenanceBill.aggregate([
+      { 
+        $match: { 
+          societyId: societyMatch, 
+          residentId: new mongoose.Types.ObjectId(residentId), 
+          isTransferredArrear: true,
+          status: { $in: ['Pending', 'PaymentInitiated', 'Overdue', 'Failed'] }
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const transferredArrearsDues = transferredAgg[0]?.total || 0;
+    const transferredArrearsCount = transferredAgg[0]?.count || 0;
+    const regularMaintenanceDues = Math.max(0, periodPendingDues - transferredArrearsDues);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        residentAccount: {
+          name: residentUser?.name || 'Resident',
+          flatNumber: residentUser?.flatNumber || 'N/A',
+          financialEffectiveDate: residentUser?.financialEffectiveDate || residentUser?.createdAt,
+          hasTransferredArrears: !!residentUser?.hasTransferredArrears,
+          transferredArrearsNotes: residentUser?.transferredArrearsNotes || null,
+          regularMaintenanceDues,
+          transferredArrearsDues,
+          transferredArrearsCount,
+          totalLegitimateOutstanding: periodPendingDues
+        },
+        periodSummary: {
+          period: req.query.period || (isAllTime ? 'all' : 'custom'),
+          periodLabel,
+          isAllTime,
+          startDate,
+          endDate,
+          totalPaid: periodTotalPaid,
+          successfulPaymentsCount: periodSuccessfulPaymentsCount,
+          failedPaymentsCount: periodFailedPaymentsCount,
+          pendingDues: periodPendingDues,
+          pendingBillsCount: periodPendingBillsCount,
+          regularMaintenanceDues,
+          transferredArrearsDues
+        },
+        lifetimeSummary: {
+          totalPaid: lifetimeTotalPaid,
+          successfulPaymentsCount: lifetimeSuccessfulPaymentsCount,
+          pendingDues: lifetimePendingDues,
+          pendingBillsCount: lifetimePendingBillsCount
+        },
+        availableMonths,
+        availableYears
       }
     });
   } catch (err) {

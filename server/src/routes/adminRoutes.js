@@ -8,7 +8,9 @@ const {
   createStaff,
   updateStaff,
   updateStaffStatus,
-  getDashboardStats
+  getDashboardStats,
+  globalSearch,
+  updateResidentFinancialOnboarding
 } = require('../controllers/adminController');
 const { verifyToken, requireRoles, requireSociety } = require('../middleware/auth');
 
@@ -19,6 +21,9 @@ router.use(verifyToken);
 router.use(requireRoles('Admin'));
 router.use(requireSociety);
 
+// Global Search (society-scoped across supported entities)
+router.get('/global-search', globalSearch);
+
 // Dashboard Statistics (atomic, society-scoped)
 router.get('/stats', getDashboardStats);
 router.get('/dashboard-stats', getDashboardStats);
@@ -27,6 +32,7 @@ router.get('/dashboard-stats', getDashboardStats);
 router.get('/registration-requests', getRegistrationRequests);
 router.patch('/registration-requests/:id/approve', approveRegistrationRequest);
 router.patch('/registration-requests/:id/reject', rejectRegistrationRequest);
+router.patch('/residents/:id/financial-onboarding', updateResidentFinancialOnboarding);
 
 // Staff Management
 router.get('/staff', getStaffList);

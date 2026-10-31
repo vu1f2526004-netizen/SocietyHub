@@ -1,4 +1,8 @@
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
+
 const express = require('express');
+const path = require('path');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -6,7 +10,17 @@ const connectDB = require('./src/config/db');
 const errorHandler = require('./src/middleware/error');
 
 // Load env vars
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
+
+// Validate critical environment variables in production
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'replace_with_secure_random_secret') {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[FATAL CONFIG] JWT_SECRET must be set to a secure, random secret in production.');
+    process.exit(1);
+  } else {
+    console.warn('[CONFIG WARNING] JWT_SECRET is using a default placeholder. Ensure a strong random secret is set for production deployment.');
+  }
+}
 
 // Connect to database
 connectDB();
@@ -28,11 +42,35 @@ app.use(express.json({
   }
 }));
 
-// Set security headers
-app.use(helmet());
+// Set security headers (permits cross-origin loading of static assets/documents)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 
-// Enable CORS
-app.use(cors());
+// Environment-aware CORS configuration
+const getCorsOptions = () => {
+  const clientUrl = process.env.CLIENT_URL;
+  if (!clientUrl || clientUrl === '*') {
+    return { origin: true, credentials: true };
+  }
+  const allowed = clientUrl.split(',').map(url => url.trim().replace(/\/+$/, '')).filter(Boolean);
+  return {
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, Razorpay webhook dispatches)
+      if (!origin) return callback(null, true);
+      const cleanOrigin = origin.replace(/\/+$/, '');
+      if (allowed.includes(cleanOrigin) || process.env.NODE_ENV !== 'production') {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS policy: Origin ${origin} not allowed`));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-razorpay-signature', 'x-razorpay-event-id']
+  };
+};
+
+app.use(cors(getCorsOptions()));
 
 // Route files
 const auth = require('./src/routes/authRoutes');
@@ -49,15 +87,12 @@ const finance = require('./src/routes/financeRoutes');
 const events = require('./src/routes/eventRoutes');
 const polls = require('./src/routes/pollRoutes');
 const notifications = require('./src/routes/notificationRoutes');
+const contact = require('./src/routes/contactRoutes');
 
-const rateLimit = require('express-rate-limit');
+const { globalLimiter } = require('./src/middleware/rateLimiter');
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 mins
-  max: 500 // limit each IP
-});
-app.use(limiter);
+// Global API rate limiting (protects general endpoints from Denial of Service)
+app.use(globalLimiter);
 
 // Mount routers
 app.use('/api/auth', auth);
@@ -77,9 +112,19 @@ app.use('/api/finance', finance);
 app.use('/api/events', events);
 app.use('/api/polls', polls);
 app.use('/api/notifications', notifications);
+app.use('/api/contact', contact);
 
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, console.log(`Server running on port ${PORT}`));
+const server = app.listen(PORT, console.log(`Server running on port ${PORT}`));
+
+process.on('unhandledRejection', (err) => {
+  console.error(`[UNHANDLED REJECTION] ${err?.message || err}`);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error(`[UNCAUGHT EXCEPTION] ${err?.message || err}`);
+});
+

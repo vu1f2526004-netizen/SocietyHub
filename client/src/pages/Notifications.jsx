@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { useToast } from '../context/ToastContext';
+import RefreshButton from '../components/shared/RefreshButton';
 import { 
   Bell, 
   CheckCheck, 
@@ -11,27 +13,34 @@ import {
   Info, 
   CreditCard, 
   UserPlus,
-  RefreshCw,
-  Filter
+  RefreshCw
 } from 'lucide-react';
 
 const Notifications = () => {
+  const toast = useToast();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('all'); // 'all' | 'unread'
   const navigate = useNavigate();
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const res = await api.get('/notifications');
       if (res.data?.success) {
         setNotifications(res.data.data || []);
       }
     } catch (err) {
       console.error('Failed to load notifications', err);
+      toast.error(err.response?.data?.message || 'Failed to refresh notifications');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -114,17 +123,14 @@ const Notifications = () => {
             </button>
           )}
 
-          <button
-            onClick={fetchNotifications}
-            title="Refresh"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              backgroundColor: 'white', color: '#64748b', border: '1px solid #cbd5e1',
-              width: '38px', height: '38px', borderRadius: '8px', cursor: 'pointer'
-            }}
-          >
-            <RefreshCw size={16} />
-          </button>
+          <RefreshButton
+            onClick={() => fetchNotifications(true)}
+            refreshing={refreshing}
+            loading={loading && notifications.length === 0}
+            title="Refresh notifications"
+            showLabel={false}
+            style={{ width: '38px', height: '38px', padding: 0 }}
+          />
         </div>
       </div>
 

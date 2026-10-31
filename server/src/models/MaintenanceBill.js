@@ -51,6 +51,37 @@ const MaintenanceBillSchema = new mongoose.Schema({
     type: String,
     sparse: true,
     index: true
+  },
+  isTransferredArrear: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  originalResidentId: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'User'
+  },
+  transferredBy: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'User'
+  },
+  transferredAt: {
+    type: Date
+  },
+  transferNotes: {
+    type: String,
+    trim: true
+  },
+  transferApprovalRef: {
+    type: String,
+    trim: true
+  },
+  lastReminderSentAt: {
+    type: Date
+  },
+  reminderCount: {
+    type: Number,
+    default: 0
   }
 }, { timestamps: true });
 

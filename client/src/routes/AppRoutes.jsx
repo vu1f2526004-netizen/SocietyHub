@@ -1,7 +1,6 @@
-import React, { useContext } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import React from 'react';
+import { Routes, Route } from 'react-router-dom';
 import ProtectedRoute from '../components/ProtectedRoute';
-import { AuthContext } from '../context/AuthContext';
 
 import Login from '../pages/Login';
 import Signup from '../pages/Signup';
@@ -49,26 +48,33 @@ import AssignedTasks from '../pages/Staff/AssignedTasks';
 import IncidentReports from '../pages/Staff/IncidentReports';
 import ParkingObservations from '../pages/Staff/ParkingObservations';
 import StaffProfile from '../pages/Staff/StaffProfile';
-
-// Smart root redirect based on authenticated role
-const RootRedirect = () => {
-  const { user } = useContext(AuthContext);
-  if (!user) return <Navigate to="/login" replace />;
-  if (user.role === 'Admin') return <Navigate to="/admin" replace />;
-  if (user.role === 'SecurityStaff') return <Navigate to="/staff" replace />;
-  return <Navigate to="/resident" replace />;
-};
+import PublicLayout from '../layouts/PublicLayout';
+import HomePage from '../pages/Public/HomePage';
+import FeaturesPage from '../pages/Public/FeaturesPage';
+import AboutPage from '../pages/Public/AboutPage';
+import FeedbackPage from '../pages/Public/FeedbackPage';
+import ContactPage from '../pages/Public/ContactPage';
+import NotFoundPage from '../pages/Public/NotFoundPage';
 
 const AppRoutes = () => {
   return (
     <Routes>
+      {/* Shared Public Layout for Marketing Pages */}
+      <Route element={<PublicLayout />}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/features" element={<FeaturesPage />} />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/feedback" element={<FeedbackPage />} />
+        <Route path="/contact" element={<ContactPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+
+      {/* Standalone Authentication & Onboarding Routes */}
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/join-society" element={<JoinSociety />} />
       <Route path="/register-society" element={<RegisterSociety />} />
       <Route path="/unauthorized" element={<Unauthorized />} />
-      
-      <Route path="/" element={<RootRedirect />} />
 
       {/* Resident Portal Routes */}
       <Route element={<ProtectedRoute allowedRoles={['Resident']} />}>
@@ -126,8 +132,6 @@ const AppRoutes = () => {
           <Route path="profile" element={<StaffProfile />} />
         </Route>
       </Route>
-
-      <Route path="*" element={<RootRedirect />} />
     </Routes>
   );
 };

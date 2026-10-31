@@ -1,46 +1,73 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
 import { Calendar, Clock, MapPin, Users, CheckCircle, XCircle } from 'lucide-react';
 
 const Events = () => {
+  const toast = useToast();
   const [events, setEvents] = useState([]);
   const [myRsvps, setMyRsvps] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
   
-  const fetchData = async () => {
+  const fetchData = useCallback(async (isRefresh = false) => {
     try {
-      setLoading(true);
-      const res = await api.get('/events');
-      setEvents(res.data.data.filter(e => e.status !== 'Draft')); // Only show non-draft
-      
-      const rsvpRes = await api.get('/events/my/rsvps');
-      setMyRsvps(rsvpRes.data.data);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const [eventsRes, rsvpRes] = await Promise.all([
+        api.get('/events'),
+        api.get('/events/my/rsvps')
+      ]);
+      setEvents((eventsRes.data?.data || []).filter(e => e.status !== 'Draft'));
+      setMyRsvps(rsvpRes.data?.data || []);
+      if (isRefresh) {
+        toast.success('Events updated');
+      }
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh events');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [toast]);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleRsvp = async (id) => {
+    if (actionLoadingId) return;
     try {
+      setActionLoadingId(id);
       await api.post(`/events/${id}/rsvp`);
-      alert('RSVP Successful! See you there.');
+      toast.success('RSVP Successful! See you there.');
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to RSVP');
+      toast.error(err.response?.data?.error || 'Failed to RSVP');
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
   const handleCancelRsvp = async (id) => {
+    if (actionLoadingId) return;
     try {
+      setActionLoadingId(id);
       await api.patch(`/events/${id}/rsvp`);
-      alert('RSVP Cancelled');
+      toast.success('RSVP Cancelled');
       fetchData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to cancel');
+      toast.error(err.response?.data?.error || 'Failed to cancel RSVP');
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
@@ -48,13 +75,22 @@ const Events = () => {
     return myRsvps.find(r => r.eventId?._id === eventId && r.status === 'Going');
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading events...</div></div>;
+  if (loading && events.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading events...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-      <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Society Events</h2>
-        <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Join community gatherings and celebrations</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Society Events</h2>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Join community gatherings and celebrations</p>
+        </div>
+        <RefreshButton onRefresh={() => fetchData(true)} loading={refreshing} title="Refresh events" />
       </div>
 
       <div style={{ display: 'grid', gap: '24px', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>

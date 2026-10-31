@@ -8,7 +8,8 @@ const {
   getAdminFinance, 
   getFinanceSummary, 
   getPublicSummary,
-  getSocietyTransparency
+  getSocietyTransparency,
+  getResidentFinanceSummary
 } = require('../controllers/financeController');
 
 const router = express.Router();
@@ -23,6 +24,9 @@ const uploadReceipt = (req, res, next) => {
   }
   next();
 };
+
+// Resident Routes
+router.get('/resident/summary', requireRoles('Resident'), getResidentFinanceSummary);
 
 // Resident & Admin Society Expense Transparency (Strictly society members, SecurityStaff rejected)
 router.get('/transparency', requireRoles('Resident', 'Admin'), getSocietyTransparency);

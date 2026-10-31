@@ -1,27 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
 import FileUpload from '../../components/shared/FileUpload';
 import { CheckSquare, Wrench, MessageSquareWarning, MapPin, Clock, CalendarDays, Camera, MessageSquare, Play, CheckCircle } from 'lucide-react';
 
 const AssignedTasks = () => {
+  const toast = useToast();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [submittingStatus, setSubmittingStatus] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
   
   // Update state variables for Task Details modal
   const [updateNotes, setUpdateNotes] = useState('');
   const [completionFile, setCompletionFile] = useState(null);
 
-  const fetchTasks = async () => {
+  const fetchTasks = useCallback(async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const [complaintsRes, repairsRes] = await Promise.all([
         api.get('/complaints/staff/assigned'),
         api.get('/repairs/staff')
       ]);
       
-      const compTasks = complaintsRes.data.data.map(t => ({ ...t, taskType: 'Complaint' }));
-      const repTasks = repairsRes.data.data.map(t => ({ ...t, taskType: 'Repair' }));
+      const compTasks = (complaintsRes.data?.data || []).map(t => ({ ...t, taskType: 'Complaint' }));
+      const repTasks = (repairsRes.data?.data || []).map(t => ({ ...t, taskType: 'Repair' }));
       
       const allTasks = [...compTasks, ...repTasks].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setTasks(allTasks);
@@ -31,18 +40,29 @@ const AssignedTasks = () => {
          const updated = allTasks.find(t => t._id === selectedTask._id);
          if (updated) setSelectedTask(updated);
       }
+      if (isRefresh) {
+        toast.success('Assigned tasks updated');
+      }
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh tasks');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [selectedTask, toast]);
 
-  useEffect(() => { fetchTasks(); }, []);
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks]);
 
   const updateTaskStatus = async (e, id, type, status) => {
     e.preventDefault();
+    if (submittingStatus) return;
     try {
+      setSubmittingStatus(true);
       const endpoint = type === 'Complaint' ? `/complaints/staff/${id}/status` : `/repairs/staff/${id}/status`;
       const data = new FormData();
       data.append('status', status);
@@ -52,12 +72,15 @@ const AssignedTasks = () => {
       }
       
       await api.patch(endpoint, data);
+      toast.success(`Task status updated to ${status}`);
       setUpdateNotes('');
       setCompletionFile(null);
       fetchTasks();
       if (status === 'Completed') setSelectedTask(null);
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to update task');
+      toast.error(err.response?.data?.error || 'Failed to update task');
+    } finally {
+      setSubmittingStatus(false);
     }
   };
 
@@ -70,13 +93,22 @@ const AssignedTasks = () => {
     }
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading tasks...</div></div>;
+  if (loading && tasks.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading tasks...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>My Assigned Tasks</h2>
-        <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>View and update complaints and repair tasks assigned to you</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>My Assigned Tasks</h2>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>View and update complaints and repair tasks assigned to you</p>
+        </div>
+        <RefreshButton onRefresh={() => fetchTasks(true)} loading={refreshing} title="Refresh tasks" />
       </div>
 
       {selectedTask ? (

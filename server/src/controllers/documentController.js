@@ -27,6 +27,15 @@ exports.createDocument = async (req, res, next) => {
 
     res.status(201).json({ success: true, data: doc });
   } catch (err) {
+    if (req.file && req.file.filename) {
+      try {
+        const cloudinary = require('cloudinary').v2;
+        const resourceType = req.file.mimetype?.startsWith('video/') 
+          ? 'video' 
+          : (req.file.mimetype === 'application/pdf' ? 'raw' : 'image');
+        await cloudinary.uploader.destroy(req.file.filename, { resource_type: resourceType });
+      } catch (_) {}
+    }
     next(err);
   }
 };
@@ -89,18 +98,35 @@ exports.viewDocumentFile = async (req, res, next) => {
 
 exports.getDocuments = async (req, res, next) => {
   try {
-    let query = { societyId: req.user.societyId, status: 'Active' };
+    const andConditions = [{ societyId: req.user.societyId, status: 'Active' }];
     
     // Residents only see ResidentVisible docs in their society
     if (req.user.role === 'Resident') {
-      query.visibility = 'ResidentVisible';
+      andConditions.push({ visibility: 'ResidentVisible' });
     } else if (req.user.role === 'SecurityStaff') {
       // Staff cannot see documents unless authorized
-      return res.status(200).json({ success: true, data: [] });
+      return res.status(200).json({ success: true, count: 0, data: [] });
     }
 
-    const docs = await Document.find(query);
-    res.status(200).json({ success: true, data: docs });
+    if (req.query.category && req.query.category !== 'All') {
+      andConditions.push({ category: req.query.category });
+    }
+
+    if (req.query.search && req.query.search.trim()) {
+      const escaped = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escaped, 'i');
+      andConditions.push({
+        $or: [
+          { title: searchRegex },
+          { description: searchRegex },
+          { category: searchRegex }
+        ]
+      });
+    }
+
+    const query = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+    const docs = await Document.find(query).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, count: docs.length, data: docs });
   } catch (err) {
     next(err);
   }

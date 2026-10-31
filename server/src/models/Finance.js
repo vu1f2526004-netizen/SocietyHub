@@ -62,7 +62,8 @@ const FinanceSchema = new mongoose.Schema({
     ref: 'User'
   },
   referenceId: {
-    type: mongoose.Schema.ObjectId, // Could link to Payment or Bill
+    type: mongoose.Schema.ObjectId,
+    ref: 'Payment',
     index: true
   }
 }, { timestamps: true });

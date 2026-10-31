@@ -41,8 +41,25 @@ exports.createComplaint = async (req, res, next) => {
 
 exports.getMyComplaints = async (req, res, next) => {
   try {
-    const complaints = await Complaint.find({ createdBy: req.user.id, societyId: req.user.societyId });
-    res.status(200).json({ success: true, data: complaints });
+    const filter = { createdBy: req.user.id, societyId: req.user.societyId };
+
+    if (req.query.status && req.query.status !== 'All') {
+      filter.status = req.query.status;
+    }
+
+    if (req.query.search && req.query.search.trim()) {
+      const escaped = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escaped, 'i');
+      filter.$or = [
+        { title: searchRegex },
+        { description: searchRegex },
+        { location: searchRegex },
+        { category: searchRegex }
+      ];
+    }
+
+    const complaints = await Complaint.find(filter).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, count: complaints.length, data: complaints });
   } catch (err) {
     next(err);
   }
@@ -50,10 +67,58 @@ exports.getMyComplaints = async (req, res, next) => {
 
 exports.getAllComplaints = async (req, res, next) => {
   try {
-    const complaints = await Complaint.find({ societyId: req.user.societyId })
-      .populate('createdBy', 'name flatNumber')
-      .populate('assignedTo', 'name');
-    res.status(200).json({ success: true, data: complaints });
+    const andConditions = [{ societyId: req.user.societyId }];
+
+    if (req.query.status && req.query.status !== 'All') {
+      andConditions.push({ status: req.query.status });
+    }
+
+    if (req.query.priority && req.query.priority !== 'All') {
+      andConditions.push({ priority: req.query.priority });
+    }
+
+    if (req.query.category && req.query.category !== 'All') {
+      andConditions.push({ category: req.query.category });
+    }
+
+    if (req.query.search && req.query.search.trim()) {
+      const escaped = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escaped, 'i');
+
+      const matchingUsers = await User.find({
+        societyId: req.user.societyId,
+        $or: [
+          { name: searchRegex },
+          { flatNumber: searchRegex },
+          { email: searchRegex }
+        ]
+      }).select('_id');
+
+      const matchingUserIds = matchingUsers.map(u => u._id);
+
+      const searchOr = [
+        { title: searchRegex },
+        { description: searchRegex },
+        { location: searchRegex },
+        { category: searchRegex }
+      ];
+
+      if (matchingUserIds.length > 0) {
+        searchOr.push({ createdBy: { $in: matchingUserIds } });
+        searchOr.push({ assignedTo: { $in: matchingUserIds } });
+      }
+
+      andConditions.push({ $or: searchOr });
+    }
+
+    const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+
+    const complaints = await Complaint.find(filter)
+      .populate('createdBy', 'name flatNumber email')
+      .populate('assignedTo', 'name')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, count: complaints.length, data: complaints });
   } catch (err) {
     next(err);
   }
@@ -168,8 +233,27 @@ exports.staffUpdateComplaint = async (req, res, next) => {
 
 exports.getAssignedTasks = async (req, res, next) => {
   try {
-    const tasks = await Complaint.find({ assignedTo: req.user.id, societyId: req.user.societyId });
-    res.status(200).json({ success: true, data: tasks });
+    const filter = { assignedTo: req.user.id, societyId: req.user.societyId };
+
+    if (req.query.status && req.query.status !== 'All') {
+      filter.status = req.query.status;
+    }
+
+    if (req.query.search && req.query.search.trim()) {
+      const searchRegex = new RegExp(req.query.search.trim(), 'i');
+      filter.$or = [
+        { title: searchRegex },
+        { description: searchRegex },
+        { location: searchRegex },
+        { category: searchRegex }
+      ];
+    }
+
+    const tasks = await Complaint.find(filter)
+      .populate('createdBy', 'name flatNumber')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, count: tasks.length, data: tasks });
   } catch (err) {
     next(err);
   }

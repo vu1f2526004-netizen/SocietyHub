@@ -22,14 +22,31 @@ const {
 exports.getRegistrationRequests = async (req, res, next) => {
   try {
     const statusFilter = req.query.status || 'PendingApproval';
-    const filter = {
-      societyId: req.user.societyId,
-      role: 'Resident'
-    };
+    const andConditions = [
+      {
+        societyId: req.user.societyId,
+        role: 'Resident'
+      }
+    ];
 
     if (statusFilter !== 'All') {
-      filter.status = statusFilter;
+      andConditions.push({ status: statusFilter });
     }
+
+    if (req.query.search && req.query.search.trim()) {
+      const sRegex = new RegExp(req.query.search.trim(), 'i');
+      andConditions.push({
+        $or: [
+          { name: sRegex },
+          { email: sRegex },
+          { flatNumber: sRegex },
+          { mobile: sRegex },
+          { phone: sRegex }
+        ]
+      });
+    }
+
+    const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
 
     const requests = await User.find(filter)
       .select('-password')
@@ -78,8 +95,14 @@ exports.approveRegistrationRequest = async (req, res, next) => {
       return next(new ErrorResponse('Only pending registration requests can be approved', 400));
     }
 
-    // Update status to Active
+    // Update status to Active and set explicit financial onboarding fields
+    const { financialEffectiveDate } = req.body;
     resident.status = 'Active';
+    resident.approvedAt = new Date();
+    resident.membershipStartDate = resident.createdAt || new Date();
+    resident.financialEffectiveDate = financialEffectiveDate 
+      ? new Date(financialEffectiveDate) 
+      : (resident.financialEffectiveDate || resident.createdAt || new Date());
     await resident.save();
 
     // Associate flat record within this society without creating duplicates
@@ -212,7 +235,8 @@ exports.getStaffList = async (req, res, next) => {
       filter.$or = [
         { name: searchRegex },
         { email: searchRegex },
-        { mobile: searchRegex }
+        { mobile: searchRegex },
+        { phone: searchRegex }
       ];
     }
 
@@ -594,3 +618,167 @@ exports.getDashboardStats = async (req, res, next) => {
     next(err);
   }
 };
+
+// @desc      Global search across supported society records (Residents, Bills, Complaints, Staff, Finance/Payments)
+// @route     GET /api/admin/global-search
+// @access    Private (Admin only)
+exports.globalSearch = async (req, res, next) => {
+  try {
+    const rawQuery = (req.query.q || req.query.search || '').trim();
+    if (!rawQuery) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          residents: [],
+          bills: [],
+          complaints: [],
+          staff: [],
+          payments: []
+        }
+      });
+    }
+
+    const sRegex = new RegExp(rawQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const societyId = req.user.societyId;
+
+    const [residents, bills, complaints, staff, payments] = await Promise.all([
+      // 1. Residents
+      User.find({
+        societyId,
+        role: 'Resident',
+        $or: [
+          { name: sRegex },
+          { email: sRegex },
+          { flatNumber: sRegex },
+          { mobile: sRegex },
+          { phone: sRegex }
+        ]
+      })
+        .select('_id name email flatNumber mobile phone status')
+        .limit(5)
+        .lean(),
+
+      // 2. Bills
+      MaintenanceBill.find({
+        societyId,
+        $or: [
+          { title: sRegex },
+          { description: sRegex },
+          { month: sRegex },
+          { billType: sRegex },
+          { flatNumber: sRegex }
+        ]
+      })
+        .populate('residentId', 'name flatNumber')
+        .select('_id title description month billType amount status flatNumber residentId')
+        .limit(5)
+        .lean(),
+
+      // 3. Complaints
+      Complaint.find({
+        societyId,
+        $or: [
+          { title: sRegex },
+          { description: sRegex },
+          { category: sRegex }
+        ]
+      })
+        .populate('createdBy', 'name flatNumber')
+        .select('_id title category priority status createdBy createdAt')
+        .limit(5)
+        .lean(),
+
+      // 4. Staff
+      User.find({
+        societyId,
+        role: 'Security',
+        $or: [
+          { name: sRegex },
+          { email: sRegex },
+          { mobile: sRegex },
+          { phone: sRegex }
+        ]
+      })
+        .select('_id name email mobile phone role status')
+        .limit(5)
+        .lean(),
+
+      // 5. Payments
+      Payment.find({
+        societyId,
+        $or: [
+          { receiptNumber: sRegex },
+          { razorpayPaymentId: sRegex },
+          { razorpayOrderId: sRegex }
+        ]
+      })
+        .populate('residentId', 'name flatNumber')
+        .populate('billId', 'month amount title')
+        .select('_id receiptNumber razorpayPaymentId amount status residentId billId createdAt')
+        .limit(5)
+        .lean()
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        residents,
+        bills,
+        complaints,
+        staff,
+        payments
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @desc      Update resident financial onboarding configuration and arrears authorization
+// @route     PATCH /api/admin/residents/:id/financial-onboarding
+// @access    Private (Admin only, same society)
+exports.updateResidentFinancialOnboarding = async (req, res, next) => {
+  try {
+    const resident = await User.findById(req.params.id);
+    if (!resident || !resident.societyId || resident.societyId.toString() !== req.user.societyId.toString()) {
+      return next(new ErrorResponse('Resident not found in your society', 404));
+    }
+    if (resident.role !== 'Resident') {
+      return next(new ErrorResponse('User is not a resident', 400));
+    }
+
+    const { financialEffectiveDate, hasTransferredArrears, transferredArrearsNotes } = req.body;
+    if (financialEffectiveDate !== undefined) {
+      const parsedDate = new Date(financialEffectiveDate);
+      if (isNaN(parsedDate.getTime())) {
+        return next(new ErrorResponse('Invalid financial effective date', 400));
+      }
+      resident.financialEffectiveDate = parsedDate;
+    }
+
+    if (hasTransferredArrears !== undefined) {
+      resident.hasTransferredArrears = Boolean(hasTransferredArrears);
+    }
+    if (transferredArrearsNotes !== undefined) {
+      resident.transferredArrearsNotes = transferredArrearsNotes ? String(transferredArrearsNotes).trim() : '';
+    }
+
+    await resident.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Resident financial onboarding configuration updated successfully',
+      data: {
+        id: resident._id,
+        name: resident.name,
+        flatNumber: resident.flatNumber,
+        financialEffectiveDate: resident.financialEffectiveDate,
+        hasTransferredArrears: resident.hasTransferredArrears,
+        transferredArrearsNotes: resident.transferredArrearsNotes
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+

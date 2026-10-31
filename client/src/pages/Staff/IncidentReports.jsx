@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
 import FileUpload from '../../components/shared/FileUpload';
-import { AlertTriangle, MapPin, AlignLeft, Camera, Send } from 'lucide-react';
+import { AlertTriangle, MapPin, AlignLeft, Camera, Send, Car } from 'lucide-react';
 
 const IncidentReports = () => {
+  const toast = useToast();
   const [formData, setFormData] = useState({ issueType: 'Incident', title: '', description: '', location: '', vehicleNumber: '' });
   const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     try {
       setSubmitting(true);
       const data = new FormData();
@@ -19,11 +22,11 @@ const IncidentReports = () => {
       // Using the community issues API for general reporting
       await api.post('/issues', data);
 
-      alert('Incident reported successfully. Admin will review it.');
+      toast.success('Incident reported successfully. Admin will review it.');
       setFormData({ issueType: 'Incident', title: '', description: '', location: '', vehicleNumber: '' });
       setFile(null);
     } catch (err) {
-      alert('Failed to report incident');
+      toast.error(err.response?.data?.error || 'Failed to report incident');
     } finally {
       setSubmitting(false);
     }

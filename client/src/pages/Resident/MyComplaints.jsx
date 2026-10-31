@@ -1,25 +1,57 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
 import { Link } from 'react-router-dom';
-import { Plus, Search, FileText } from 'lucide-react';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
+import { Plus, Search, FileText, X, Filter } from 'lucide-react';
 
 const MyComplaints = () => {
+  const toast = useToast();
   const [complaints, setComplaints] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  const fetchComplaints = useCallback(async (isRefresh = false, overrides = {}) => {
+    try {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const activeSearch = overrides.search !== undefined ? overrides.search : debouncedSearch;
+      const activeStatus = overrides.status !== undefined ? overrides.status : statusFilter;
+
+      const params = {};
+      if (activeSearch && activeSearch.trim()) params.search = activeSearch.trim();
+      if (activeStatus && activeStatus !== 'All') params.status = activeStatus;
+
+      const res = await api.get('/complaints/my', { params });
+      setComplaints(res.data?.data || []);
+    } catch (err) {
+      console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh complaints');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [debouncedSearch, statusFilter, toast]);
 
   useEffect(() => {
-    const fetchComplaints = async () => {
-      try {
-        const res = await api.get('/complaints/my');
-        setComplaints(res.data.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchComplaints();
-  }, []);
+  }, [fetchComplaints]);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -32,26 +64,113 @@ const MyComplaints = () => {
     }
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading complaints...</div></div>;
+  if (loading && complaints.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading complaints...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: 0 }}>My Complaints</h2>
-        <Link to="/resident/complaints/new" style={{ textDecoration: 'none' }}>
-          <button style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            backgroundColor: '#0f172a', color: 'white', border: 'none',
-            padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
-            fontWeight: '500', transition: 'background 0.2s'
-          }}
-          onMouseOver={e => e.currentTarget.style.backgroundColor = '#334155'}
-          onMouseOut={e => e.currentTarget.style.backgroundColor = '#0f172a'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <RefreshButton
+            onClick={() => fetchComplaints(true)}
+            refreshing={refreshing}
+            loading={loading && complaints.length === 0}
+            title="Refresh my complaints"
+          />
+          <Link to="/resident/complaints/new" style={{ textDecoration: 'none' }}>
+            <button style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              backgroundColor: '#0f172a', color: 'white', border: 'none',
+              padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
+              fontWeight: '500', transition: 'background 0.2s'
+            }}
+            onMouseOver={e => e.currentTarget.style.backgroundColor = '#334155'}
+            onMouseOut={e => e.currentTarget.style.backgroundColor = '#0f172a'}
+            >
+              <Plus size={18} />
+              New Complaint
+            </button>
+          </Link>
+        </div>
+      </div>
+
+      {/* Filter and Search Bar */}
+      <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: '260px' }}>
+          <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />
+          <input
+            type="text"
+            placeholder="Search complaints by title, category, or description..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px 36px 10px 40px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              fontSize: '0.875rem',
+              outline: 'none',
+              backgroundColor: '#ffffff',
+              boxSizing: 'border-box'
+            }}
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+                setDebouncedSearch('');
+                fetchComplaints(false, { search: '' });
+              }}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                right: '10px',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#94a3b8',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+              title="Clear search"
+              aria-label="Clear search"
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
+
+        <div style={{ position: 'relative', minWidth: '180px' }}>
+          <Filter size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px 10px 10px 40px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              fontSize: '0.875rem',
+              backgroundColor: 'white',
+              boxSizing: 'border-box'
+            }}
           >
-            <Plus size={18} />
-            New Complaint
-          </button>
-        </Link>
+            <option value="All">All Statuses</option>
+            <option value="Pending">Pending</option>
+            <option value="Assigned">Assigned</option>
+            <option value="InProgress">In Progress</option>
+            <option value="Completed">Completed</option>
+            <option value="Resolved">Resolved</option>
+          </select>
+        </div>
       </div>
 
       <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden' }}>

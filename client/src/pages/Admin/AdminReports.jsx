@@ -1,50 +1,69 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
 import { BarChart3, TrendingUp, AlertTriangle, MessageSquareWarning, Wrench, Calendar, FileText } from 'lucide-react';
 
 const AdminReports = () => {
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchAnalytics = useCallback(async (isRefresh = false) => {
+    try {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const res = await api.get('/issues/analytics');
+      setData(res.data?.data || null);
+    } catch (err) {
+      console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh reports data');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [toast]);
 
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      try {
-        setLoading(true);
-        // We reuse the /issues/analytics endpoint and we can extend it later if needed.
-        // For now, this serves as our reporting overview.
-        const res = await api.get('/issues/analytics');
-        setData(res.data.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchAnalytics();
-  }, []);
+  }, [fetchAnalytics]);
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading reports...</div></div>;
+  if (loading && !data) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading reports...</div></div>;
   if (!data) return <div style={{ textAlign: 'center', padding: '40px' }}>No report data available.</div>;
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Society Reports & Analytics</h2>
           <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Overview of community issues and parking reports</p>
         </div>
-        <button 
-          style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            backgroundColor: '#f8fafc', color: '#334155', border: '1px solid #cbd5e1',
-            padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
-            fontWeight: '600', transition: 'background 0.2s'
-          }}
-          onMouseOver={e => e.currentTarget.style.backgroundColor = '#f1f5f9'}
-          onMouseOut={e => e.currentTarget.style.backgroundColor = '#f8fafc'}
-        >
-          <FileText size={18} /> Export PDF
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <RefreshButton
+            onClick={() => fetchAnalytics(true)}
+            refreshing={refreshing}
+            loading={loading && !data}
+            title="Refresh analytics data"
+          />
+          <button 
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              backgroundColor: '#f8fafc', color: '#334155', border: '1px solid #cbd5e1',
+              padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
+              fontWeight: '600', transition: 'background 0.2s'
+            }}
+            onMouseOver={e => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+            onMouseOut={e => e.currentTarget.style.backgroundColor = '#f8fafc'}
+          >
+            <FileText size={18} /> Export PDF
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '32px' }}>

@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
+import ConfirmModal from '../../components/shared/ConfirmModal';
 import { 
   WalletCards, 
   Plus, 
@@ -17,16 +20,32 @@ import {
   ArrowRight, 
   RefreshCw, 
   Eye,
-  Calendar
+  Calendar,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Bell
 } from 'lucide-react';
 
 const MaintenanceManagement = () => {
+  const toast = useToast();
   const [bills, setBills] = useState([]);
   const [residents, setResidents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
+  const [pagination, setPagination] = useState({ page: 1, limit: 15, totalPages: 1, totalCount: 0 });
   
+  // 300ms debounce on search input
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
   // Navigation tabs: 'bills' | 'bulk' | 'single'
   const [activeTab, setActiveTab] = useState('bills');
 
@@ -61,25 +80,118 @@ const MaintenanceManagement = () => {
   const [generationResult, setGenerationResult] = useState(null);
   const [bulkError, setBulkError] = useState(null);
 
-  const fetchData = async () => {
+  // Reminder Dialog State
+  const [reminderModalBill, setReminderModalBill] = useState(null);
+  const [isSendingReminder, setIsSendingReminder] = useState(false);
+
+  const handleConfirmSendReminder = async () => {
+    if (!reminderModalBill) return;
     try {
-      setLoading(true);
+      setIsSendingReminder(true);
+      const res = await api.post(`/bills/admin/${reminderModalBill._id}/reminder`);
+      if (res.data?.success) {
+        toast.success(res.data.message || 'Payment reminder sent successfully.');
+        setBills(prev => prev.map(b => {
+          if (b._id === reminderModalBill._id) {
+            return {
+              ...b,
+              lastReminderSentAt: res.data.bill?.lastReminderSentAt || new Date(),
+              reminderCount: (b.reminderCount || 0) + 1
+            };
+          }
+          return b;
+        }));
+        setReminderModalBill(null);
+      }
+    } catch (err) {
+      console.error('Failed to send reminder:', err);
+      toast.error(err.response?.data?.message || err.response?.data?.error || 'Failed to dispatch reminder');
+    } finally {
+      setIsSendingReminder(false);
+    }
+  };
+
+  const fetchData = async (isRefresh = false, overrides = {}) => {
+    try {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      const activePage = overrides.page !== undefined ? overrides.page : pagination.page;
+      const activeSearch = overrides.search !== undefined ? overrides.search : debouncedSearch;
+      const activeStatus = overrides.status !== undefined ? overrides.status : filterStatus;
+
+      const billParams = {
+        page: activePage,
+        limit: pagination.limit
+      };
+
+      if (activeSearch && activeSearch.trim()) {
+        billParams.search = activeSearch.trim();
+      }
+
+      if (activeStatus && activeStatus !== 'All') {
+        billParams.status = activeStatus;
+      }
+
       const [resBills, resUsers] = await Promise.all([
-        api.get('/bills/admin'),
+        api.get('/bills/admin', { params: billParams }),
         api.get('/users')
       ]);
-      setBills(resBills.data.data || []);
+
+      const billsData = resBills.data.data || [];
+      setBills(billsData);
       setResidents((resUsers.data.data || []).filter(u => u.role === 'Resident'));
+
+      if (resBills.data?.pagination) {
+        setPagination(prev => ({
+          ...prev,
+          page: resBills.data.pagination.page || activePage,
+          totalPages: resBills.data.pagination.totalPages || 1,
+          totalCount: resBills.data.pagination.totalCount !== undefined ? resBills.data.pagination.totalCount : billsData.length
+        }));
+      } else {
+        setPagination(prev => ({
+          ...prev,
+          page: activePage,
+          totalPages: Math.ceil(billsData.length / prev.limit) || 1,
+          totalCount: billsData.length
+        }));
+      }
     } catch (err) {
       console.error('Failed to fetch billing data:', err);
+      const msg = err.response?.data?.message || err.response?.data?.error || 'Failed to load maintenance records';
+      if (isRefresh) {
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => { 
     fetchData(); 
   }, []);
+
+  // When debounced search or filterStatus changes, reset to page 1 and fetch
+  const isFirstMountRef = useRef(true);
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    setPagination(prev => ({ ...prev, page: 1 }));
+    fetchData(false, { page: 1, search: debouncedSearch, status: filterStatus });
+  }, [debouncedSearch, filterStatus]);
+
+  const handlePageChange = (newPage) => {
+    const validPage = Math.max(1, Math.min(pagination.totalPages, newPage));
+    setPagination(prev => ({ ...prev, page: validPage }));
+    fetchData(false, { page: validPage });
+  };
 
   // Format month input for display (e.g. "2026-11" -> "November 2026")
   const formatMonthDisplay = (monthStr) => {
@@ -99,12 +211,12 @@ const MaintenanceManagement = () => {
     try {
       const formattedMonth = formatMonthDisplay(formData.month);
       await api.post('/bills/admin', { ...formData, month: formattedMonth });
-      alert('Single bill generated successfully');
+      toast.success('Single bill generated successfully');
       setFormData({ residentId: '', amount: '', dueDate: '', month: '', type: 'Maintenance', description: '' });
       setActiveTab('bills');
-      fetchData();
+      fetchData(true);
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to generate single bill');
+      toast.error(err.response?.data?.error || 'Failed to generate single bill');
     } finally {
       setSingleSubmitting(false);
     }
@@ -199,13 +311,6 @@ const MaintenanceManagement = () => {
     }
   };
 
-  const filteredBills = bills.filter(b => {
-    const searchTarget = `${b.residentId?.name || ''} ${b.flatNumber || b.residentId?.flatNumber || ''} ${b.month || ''}`.toLowerCase();
-    const matchesSearch = searchTerm === '' || searchTarget.includes(searchTerm.toLowerCase());
-    const matchesStatus = filterStatus === 'All' || b.status === filterStatus;
-    return matchesSearch && matchesStatus;
-  });
-
   const totalOutstandingDues = bills
     .filter(b => ['Pending', 'PaymentInitiated', 'Overdue', 'Failed'].includes(b.status))
     .reduce((sum, b) => sum + (b.amount || 0), 0);
@@ -237,52 +342,61 @@ const MaintenanceManagement = () => {
           </p>
         </div>
 
-        {/* View Mode Tabs */}
-        <div style={{ display: 'flex', gap: '8px', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
-          <button
-            onClick={() => { setActiveTab('bills'); setPreviewData(null); setGenerationResult(null); }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              backgroundColor: activeTab === 'bills' ? 'white' : 'transparent',
-              color: activeTab === 'bills' ? '#0f172a' : '#64748b',
-              border: 'none', padding: '8px 14px', borderRadius: '7px',
-              cursor: 'pointer', fontWeight: '600', fontSize: '0.875rem',
-              boxShadow: activeTab === 'bills' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-              transition: 'all 0.15s ease'
-            }}
-          >
-            <WalletCards size={16} /> All Bills ({bills.length})
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          {/* View Mode Tabs */}
+          <div style={{ display: 'flex', gap: '8px', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
+            <button
+              onClick={() => { setActiveTab('bills'); setPreviewData(null); setGenerationResult(null); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                backgroundColor: activeTab === 'bills' ? 'white' : 'transparent',
+                color: activeTab === 'bills' ? '#0f172a' : '#64748b',
+                border: 'none', padding: '8px 14px', borderRadius: '7px',
+                cursor: 'pointer', fontWeight: '600', fontSize: '0.875rem',
+                boxShadow: activeTab === 'bills' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <WalletCards size={16} /> All Bills ({bills.length})
+            </button>
 
-          <button
-            onClick={() => { setActiveTab('bulk'); setGenerationResult(null); }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              backgroundColor: activeTab === 'bulk' ? '#10b981' : 'transparent',
-              color: activeTab === 'bulk' ? 'white' : '#64748b',
-              border: 'none', padding: '8px 14px', borderRadius: '7px',
-              cursor: 'pointer', fontWeight: '600', fontSize: '0.875rem',
-              boxShadow: activeTab === 'bulk' ? '0 1px 3px rgba(16,185,129,0.3)' : 'none',
-              transition: 'all 0.15s ease'
-            }}
-          >
-            <Layers size={16} /> Monthly Bulk Billing
-          </button>
+            <button
+              onClick={() => { setActiveTab('bulk'); setGenerationResult(null); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                backgroundColor: activeTab === 'bulk' ? '#10b981' : 'transparent',
+                color: activeTab === 'bulk' ? 'white' : '#64748b',
+                border: 'none', padding: '8px 14px', borderRadius: '7px',
+                cursor: 'pointer', fontWeight: '600', fontSize: '0.875rem',
+                boxShadow: activeTab === 'bulk' ? '0 1px 3px rgba(16,185,129,0.3)' : 'none',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Layers size={16} /> Monthly Bulk Billing
+            </button>
 
-          <button
-            onClick={() => { setActiveTab('single'); setPreviewData(null); setGenerationResult(null); }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              backgroundColor: activeTab === 'single' ? 'white' : 'transparent',
-              color: activeTab === 'single' ? '#0f172a' : '#64748b',
-              border: 'none', padding: '8px 14px', borderRadius: '7px',
-              cursor: 'pointer', fontWeight: '600', fontSize: '0.875rem',
-              boxShadow: activeTab === 'single' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-              transition: 'all 0.15s ease'
-            }}
-          >
-            <Plus size={16} /> Single Bill
-          </button>
+            <button
+              onClick={() => { setActiveTab('single'); setPreviewData(null); setGenerationResult(null); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                backgroundColor: activeTab === 'single' ? 'white' : 'transparent',
+                color: activeTab === 'single' ? '#0f172a' : '#64748b',
+                border: 'none', padding: '8px 14px', borderRadius: '7px',
+                cursor: 'pointer', fontWeight: '600', fontSize: '0.875rem',
+                boxShadow: activeTab === 'single' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Plus size={16} /> Single Bill
+            </button>
+          </div>
+
+          <RefreshButton
+            onClick={() => fetchData(true)}
+            refreshing={refreshing}
+            loading={loading && bills.length === 0}
+            title="Refresh maintenance records"
+          />
         </div>
       </div>
 
@@ -385,8 +499,8 @@ const MaintenanceManagement = () => {
                     <input 
                       type="number" 
                       required 
-                      min="1"
-                      step="50"
+                      min="0"
+                      step="1"
                       placeholder="e.g. 2500"
                       value={bulkForm.amount} 
                       onChange={e => {
@@ -764,7 +878,7 @@ const MaintenanceManagement = () => {
                 <label style={{ fontSize: '0.875rem', fontWeight: '500', color: '#334155' }}>Amount (₹)*</label>
                 <div style={{ position: 'relative' }}>
                   <IndianRupee size={16} color="#94a3b8" style={{ position: 'absolute', top: '12px', left: '12px' }} />
-                  <input type="number" required min="1" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} style={{ width: '100%', padding: '10px 10px 10px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} placeholder="0.00" />
+                  <input type="number" required min="0" step="1" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} style={{ width: '100%', padding: '10px 10px 10px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} placeholder="0.00" />
                 </div>
               </div>
             </div>
@@ -836,19 +950,41 @@ const MaintenanceManagement = () => {
           </div>
 
           {/* Search & Filter Controls */}
-          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
             <div style={{ position: 'relative', flex: 1, minWidth: '250px' }}>
-              <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />
+              <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '11px', left: '12px' }} />
               <input 
                 type="text" 
                 placeholder="Search by resident name, flat number, or billing month..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
+                style={{ width: '100%', padding: '10px 36px 10px 40px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                  title="Clear search"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
             <div style={{ position: 'relative', minWidth: '200px' }}>
-              <Filter size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />
+              <Filter size={18} color="#94a3b8" style={{ position: 'absolute', top: '11px', left: '12px' }} />
               <select 
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value)}
@@ -866,75 +1002,219 @@ const MaintenanceManagement = () => {
 
           {/* Bills Table */}
           <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-            {filteredBills.length === 0 ? (
+            {bills.length === 0 ? (
               <div style={{ padding: '48px', textAlign: 'center', color: '#64748b' }}>
                 <WalletCards size={48} style={{ margin: '0 auto 16px auto', opacity: 0.5 }} />
                 <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#334155', margin: '0 0 8px 0' }}>No bills found</h3>
-                <p style={{ margin: 0, fontSize: '0.875rem' }}>Try adjusting your search criteria or generate monthly bills using the tab above.</p>
+                <p style={{ margin: 0, fontSize: '0.875rem' }}>
+                  {searchTerm || filterStatus !== 'All' 
+                    ? 'No bills match your active search or filter criteria.' 
+                    : 'Try adjusting your search criteria or generate monthly bills using the tab above.'}
+                </p>
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                  <thead style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                    <tr>
-                      <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Resident / Flat</th>
-                      <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Bill Type</th>
-                      <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Month</th>
-                      <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Due Date</th>
-                      <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Amount</th>
-                      <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredBills.map(b => {
-                      const { bg, text, icon: StatusIcon } = getStatusDisplay(b.status);
-                      return (
-                        <tr key={b._id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                          <td style={{ padding: '16px 20px' }}>
-                            <div style={{ fontWeight: '600', color: '#0f172a', fontSize: '0.875rem' }}>
-                              {b.residentId?.name || 'Resident'}
-                            </div>
-                            <div style={{ color: '#64748b', fontSize: '0.75rem' }}>
-                              Flat: {b.flatNumber || b.residentId?.flatNumber || 'N/A'}
-                            </div>
-                          </td>
-                          <td style={{ padding: '16px 20px', fontSize: '0.875rem', color: '#334155', fontWeight: '500' }}>
-                            {b.type}
-                            {b.description && (
-                              <div style={{ fontSize: '0.72rem', color: '#94a3b8', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {b.description}
+              <div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                    <thead style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                      <tr>
+                        <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Resident / Flat</th>
+                        <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Bill Type</th>
+                        <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Month</th>
+                        <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Due Date</th>
+                        <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Amount</th>
+                        <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b' }}>Status</th>
+                        <th style={{ padding: '16px 20px', fontSize: '0.875rem', fontWeight: '600', color: '#64748b', textAlign: 'right' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bills.map(b => {
+                        const { bg, text, icon: StatusIcon } = getStatusDisplay(b.status);
+                        const isUnpaid = b.status !== 'Paid' && b.status !== 'Cancelled';
+                        return (
+                          <tr key={b._id} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                            <td style={{ padding: '16px 20px' }}>
+                              <div style={{ fontWeight: '600', color: '#0f172a', fontSize: '0.875rem' }}>
+                                {b.residentId?.name || 'Resident'}
                               </div>
-                            )}
-                          </td>
-                          <td style={{ padding: '16px 20px', fontSize: '0.875rem', color: '#64748b' }}>
-                            {b.month}
-                          </td>
-                          <td style={{ padding: '16px 20px', fontSize: '0.875rem', color: '#dc2626', fontWeight: '500' }}>
-                            {new Date(b.dueDate).toLocaleDateString()}
-                          </td>
-                          <td style={{ padding: '16px 20px', fontWeight: '700', color: '#0f172a', fontSize: '0.95rem' }}>
-                            ₹{b.amount?.toLocaleString()}
-                          </td>
-                          <td style={{ padding: '16px 20px' }}>
-                            <span style={{ 
-                              backgroundColor: bg, color: text, padding: '4px 10px', borderRadius: '9999px', 
-                              fontSize: '0.75rem', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' 
-                            }}>
-                              <StatusIcon size={12} />
-                              {b.status}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                              <div style={{ color: '#64748b', fontSize: '0.75rem' }}>
+                                Flat: {b.flatNumber || b.residentId?.flatNumber || 'N/A'} {b.residentId?.email ? `• ${b.residentId.email}` : ''}
+                              </div>
+                            </td>
+                            <td style={{ padding: '16px 20px', fontSize: '0.875rem', color: '#334155', fontWeight: '500' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span>{b.type}</span>
+                                {b.isTransferredArrear && (
+                                  <span style={{ backgroundColor: '#fef3c7', color: '#92400e', fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', fontWeight: '700', border: '1px solid #fde68a' }}>
+                                    Transferred Arrear
+                                  </span>
+                                )}
+                              </div>
+                              {b.description && (
+                                <div style={{ fontSize: '0.72rem', color: '#94a3b8', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {b.description}
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: '16px 20px', fontSize: '0.875rem', color: '#64748b' }}>
+                              {b.month}
+                            </td>
+                            <td style={{ padding: '16px 20px', fontSize: '0.875rem', color: '#dc2626', fontWeight: '500' }}>
+                              {new Date(b.dueDate).toLocaleDateString()}
+                              {b.lastReminderSentAt && (
+                                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                  Reminder: {b.reminderCount} sent
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: '16px 20px', fontWeight: '700', color: '#0f172a', fontSize: '0.95rem' }}>
+                              ₹{b.amount?.toLocaleString()}
+                            </td>
+                            <td style={{ padding: '16px 20px' }}>
+                              <span style={{ 
+                                backgroundColor: bg, color: text, padding: '4px 10px', borderRadius: '9999px', 
+                                fontSize: '0.75rem', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' 
+                              }}>
+                                <StatusIcon size={12} />
+                                {b.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '16px 20px', textAlign: 'right' }}>
+                              {isUnpaid ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setReminderModalBill(b)}
+                                  style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #d97706',
+                                    backgroundColor: '#fffbeb',
+                                    color: '#b45309',
+                                    fontSize: '0.78rem',
+                                    fontWeight: '700',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                  }}
+                                  title="Send payment reminder to resident"
+                                >
+                                  <Bell size={13} /> Send Reminder
+                                </button>
+                              ) : (
+                                <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination Footer */}
+                {pagination.totalPages > 1 && (
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center', 
+                    padding: '12px 20px', 
+                    borderTop: '1px solid #e2e8f0', 
+                    backgroundColor: '#f8fafc',
+                    flexWrap: 'wrap',
+                    gap: '8px'
+                  }}>
+                    <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                      Showing page {pagination.page} of {pagination.totalPages} ({pagination.totalCount} total bills)
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => handlePageChange(pagination.page - 1)}
+                        disabled={pagination.page <= 1}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          backgroundColor: '#ffffff',
+                          cursor: pagination.page <= 1 ? 'not-allowed' : 'pointer',
+                          fontSize: '0.85rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          color: pagination.page <= 1 ? '#94a3b8' : '#334155'
+                        }}
+                      >
+                        <ChevronLeft size={16} /> Previous
+                      </button>
+                      <button
+                        onClick={() => handlePageChange(pagination.page + 1)}
+                        disabled={pagination.page >= pagination.totalPages}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          backgroundColor: '#ffffff',
+                          cursor: pagination.page >= pagination.totalPages ? 'not-allowed' : 'pointer',
+                          fontSize: '0.85rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          color: pagination.page >= pagination.totalPages ? '#94a3b8' : '#334155'
+                        }}
+                      >
+                        Next <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </>
       )}
 
+      {/* Individual Reminder Confirmation Dialog */}
+      <ConfirmModal
+        isOpen={!!reminderModalBill}
+        title="Send Payment Reminder"
+        confirmText="Send Reminder"
+        confirmVariant="primary"
+        loading={isSendingReminder}
+        onConfirm={handleConfirmSendReminder}
+        onClose={() => setReminderModalBill(null)}
+      >
+        {reminderModalBill && (
+          <div style={{ marginTop: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px' }}>
+            <table style={{ width: '100%', fontSize: '0.85rem' }}>
+              <tbody>
+                <tr>
+                  <td style={{ color: '#64748b', padding: '4px 0' }}>Resident:</td>
+                  <td style={{ fontWeight: '700', textAlign: 'right', color: '#0f172a' }}>{reminderModalBill.residentId?.name}</td>
+                </tr>
+                <tr>
+                  <td style={{ color: '#64748b', padding: '4px 0' }}>Flat:</td>
+                  <td style={{ fontWeight: '600', textAlign: 'right', color: '#0f172a' }}>{reminderModalBill.flatNumber || reminderModalBill.residentId?.flatNumber}</td>
+                </tr>
+                <tr>
+                  <td style={{ color: '#64748b', padding: '4px 0' }}>Billing Period:</td>
+                  <td style={{ fontWeight: '600', textAlign: 'right', color: '#0f172a' }}>{reminderModalBill.month}</td>
+                </tr>
+                <tr>
+                  <td style={{ color: '#64748b', padding: '4px 0' }}>Outstanding Amount:</td>
+                  <td style={{ fontWeight: '800', textAlign: 'right', color: '#dc2626' }}>₹{Number(reminderModalBill.amount || 0).toLocaleString()}</td>
+                </tr>
+                <tr>
+                  <td style={{ color: '#64748b', padding: '4px 0' }}>Due Date:</td>
+                  <td style={{ fontWeight: '600', textAlign: 'right', color: '#2563eb' }}>{new Date(reminderModalBill.dueDate).toLocaleDateString()}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p style={{ margin: '12px 0 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+              An email and in-app notification will be dispatched immediately to this resident.
+            </p>
+          </div>
+        )}
+      </ConfirmModal>
     </div>
   );
 };

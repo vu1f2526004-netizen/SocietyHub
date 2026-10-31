@@ -1,60 +1,117 @@
-import React, { useState, useEffect } from 'react';
-import api from '../../services/api';
+import React, { useState, useEffect, useCallback } from 'react';
+import api, { getAuthToken, getApiBaseUrl } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
+import ConfirmModal from '../../components/shared/ConfirmModal';
 import FileUpload from '../../components/shared/FileUpload';
-import { FileText, Plus, Eye, Lock, Globe, Trash2, CalendarDays } from 'lucide-react';
+import { FileText, Plus, Eye, Lock, Globe, Trash2, CalendarDays, Search, X } from 'lucide-react';
 
 const DocumentsManagement = () => {
+  const toast = useToast();
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ title: '', category: '', visibility: 'AdminOnly' });
   const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
-  const fetchDocs = async () => {
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  const [modalState, setModalState] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'Confirm',
+    confirmVariant: 'danger',
+    onConfirm: null,
+    loading: false
+  });
+
+  const fetchDocs = useCallback(async (isRefresh = false, searchOverride) => {
     try {
-      setLoading(true);
-      const res = await api.get('/documents');
-      setDocs(res.data.data);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const activeSearch = searchOverride !== undefined ? searchOverride : debouncedSearch;
+      const params = {};
+      if (activeSearch && activeSearch.trim()) {
+        params.search = activeSearch.trim();
+      }
+      const res = await api.get('/documents', { params });
+      setDocs(res.data?.data || []);
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh documents list');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [debouncedSearch, toast]);
 
-  useEffect(() => { fetchDocs(); }, []);
+  useEffect(() => { 
+    fetchDocs(); 
+  }, [fetchDocs]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (uploading) return;
     if (!file) {
-      alert('Please select a file to upload');
+      toast.error('Please select a file to upload');
       return;
     }
+    setUploading(true);
     try {
       const data = new FormData();
       Object.keys(formData).forEach(key => data.append(key, formData[key]));
       data.append('document', file);
       
       await api.post('/documents', data);
-      alert('Document uploaded successfully');
+      toast.success('Document uploaded successfully');
       setFormData({ title: '', category: '', visibility: 'AdminOnly' });
       setFile(null);
       setShowForm(false);
-      fetchDocs();
+      fetchDocs(true);
     } catch (err) {
-      alert(err.response?.data?.error || 'Upload failed');
+      toast.error(err.response?.data?.error || 'Upload failed');
+    } finally {
+      setUploading(false);
     }
   };
 
-  const deleteDoc = async (id) => {
-    if(window.confirm('Are you sure you want to delete this document?')) {
-      try {
-        await api.delete(`/documents/${id}`);
-        fetchDocs();
-      } catch (err) {
-        alert('Failed to delete document');
+  const deleteDoc = (id, title = 'this document') => {
+    setModalState({
+      isOpen: true,
+      title: 'Delete Document',
+      message: `Are you sure you want to delete "${title}"? This action cannot be undone.`,
+      confirmText: 'Delete Document',
+      confirmVariant: 'danger',
+      loading: false,
+      onConfirm: async () => {
+        try {
+          setModalState(m => ({ ...m, loading: true }));
+          await api.delete(`/documents/${id}`);
+          toast.success('Document deleted successfully');
+          setModalState(m => ({ ...m, isOpen: false, loading: false }));
+          fetchDocs(true);
+        } catch (err) {
+          toast.error(err.response?.data?.error || 'Failed to delete document');
+          setModalState(m => ({ ...m, loading: false }));
+        }
       }
-    }
+    });
   };
 
   const getVisibilityIcon = (visibility) => {
@@ -66,34 +123,48 @@ const DocumentsManagement = () => {
     if (doc.url && /\.(jpg|jpeg|png|webp)$/i.test(doc.url)) {
       return doc.url;
     }
-    const token = localStorage.getItem('token');
-    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+    const token = getAuthToken() || localStorage.getItem('token');
+    const apiBase = getApiBaseUrl();
     return `${apiBase}/documents/${doc._id}/file?token=${encodeURIComponent(token || '')}`;
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading documents...</div></div>;
+  if (loading && docs.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading documents...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Documents Management</h2>
           <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Upload and manage society rules, policies, and files</p>
         </div>
-        <button 
-          onClick={() => setShowForm(!showForm)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            backgroundColor: '#10b981', color: 'white', border: 'none',
-            padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
-            fontWeight: '600', transition: 'background 0.2s'
-          }}
-          onMouseOver={e => e.currentTarget.style.backgroundColor = '#059669'}
-          onMouseOut={e => e.currentTarget.style.backgroundColor = '#10b981'}
-        >
-          {showForm ? <FileText size={18} /> : <Plus size={18} />}
-          {showForm ? 'View Documents' : 'Upload Document'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <RefreshButton
+            onClick={() => fetchDocs(true)}
+            refreshing={refreshing}
+            loading={loading && docs.length === 0}
+            title="Refresh documents list"
+          />
+          <button 
+            onClick={() => setShowForm(!showForm)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              backgroundColor: '#10b981', color: 'white', border: 'none',
+              padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
+              fontWeight: '600', transition: 'background 0.2s'
+            }}
+            onMouseOver={e => e.currentTarget.style.backgroundColor = '#059669'}
+            onMouseOut={e => e.currentTarget.style.backgroundColor = '#10b981'}
+          >
+            {showForm ? <FileText size={18} /> : <Plus size={18} />}
+            {showForm ? 'View Documents' : 'Upload Document'}
+          </button>
+        </div>
       </div>
 
       {showForm ? (
@@ -127,20 +198,89 @@ const DocumentsManagement = () => {
               </div>
             </div>
 
-            <button type="submit" style={{ padding: '12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' }}>
-              Upload
+            <button
+              type="submit"
+              disabled={uploading}
+              style={{
+                padding: '12px',
+                backgroundColor: uploading ? '#94a3b8' : '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontWeight: '600',
+                cursor: uploading ? 'not-allowed' : 'pointer',
+                marginTop: '8px',
+                transition: 'background-color 0.2s ease'
+              }}
+            >
+              {uploading ? 'Uploading...' : 'Upload'}
             </button>
           </form>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-          {docs.length === 0 ? (
-             <div style={{ gridColumn: '1 / -1', padding: '48px', textAlign: 'center', color: '#64748b', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-               <FileText size={48} style={{ margin: '0 auto 16px auto', opacity: 0.5 }} />
-               <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#334155', margin: '0 0 8px 0' }}>No documents found</h3>
-               <p style={{ margin: 0 }}>Upload a document to get started.</p>
-             </div>
-          ) : (
+        <>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: 1, maxWidth: '420px' }}>
+              <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '11px', left: '12px' }} />
+              <input
+                type="text"
+                placeholder="Search documents by title or category..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 36px 10px 38px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '0.875rem',
+                  outline: 'none',
+                  backgroundColor: '#ffffff'
+                }}
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    fetchDocs(false, '');
+                  }}
+                  style={{
+                    position: 'absolute',
+                    top: '50%',
+                    right: '10px',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#94a3b8',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                  title="Clear search"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+            {searchTerm && (
+              <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                Found {docs.length} document{docs.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
+            {docs.length === 0 ? (
+              <div style={{ gridColumn: '1 / -1', padding: '48px', textAlign: 'center', color: '#64748b', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <FileText size={48} style={{ margin: '0 auto 16px auto', opacity: 0.5 }} />
+                <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#334155', margin: '0 0 8px 0' }}>
+                  {searchTerm ? 'No matching documents found' : 'No documents found'}
+                </h3>
+                <p style={{ margin: 0 }}>
+                  {searchTerm ? 'Try adjusting your search terms.' : 'Upload a document to get started.'}
+                </p>
+              </div>
+            ) : (
             docs.map(doc => (
               <div key={doc._id} style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ padding: '20px', flex: 1 }}>
@@ -164,7 +304,7 @@ const DocumentsManagement = () => {
                     <Eye size={14} /> View
                   </a>
                   <button 
-                    onClick={() => deleteDoc(doc._id)}
+                    onClick={() => deleteDoc(doc._id, doc.title)}
                     style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', backgroundColor: 'transparent', color: '#ef4444', border: 'none', fontSize: '0.875rem', fontWeight: '600', cursor: 'pointer' }}
                   >
                     <Trash2 size={14} /> Delete
@@ -174,7 +314,20 @@ const DocumentsManagement = () => {
             ))
           )}
         </div>
+        </>
       )}
+
+      {/* Accessible Action Confirm Modal */}
+      <ConfirmModal
+        isOpen={modalState.isOpen}
+        title={modalState.title}
+        message={modalState.message}
+        confirmText={modalState.confirmText}
+        confirmVariant={modalState.confirmVariant}
+        loading={modalState.loading}
+        onConfirm={modalState.onConfirm}
+        onClose={() => setModalState(m => ({ ...m, isOpen: false }))}
+      />
     </div>
   );
 };

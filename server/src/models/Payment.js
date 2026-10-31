@@ -18,6 +18,45 @@ const PaymentSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  payerId: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'User',
+    index: true
+  },
+  payerName: {
+    type: String,
+    trim: true
+  },
+  payerEmail: {
+    type: String,
+    trim: true
+  },
+  flatNumber: {
+    type: String,
+    trim: true
+  },
+  billingMonth: {
+    type: String,
+    trim: true
+  },
+  currency: {
+    type: String,
+    default: 'INR'
+  },
+  additionalCharges: {
+    type: Number,
+    default: 0
+  },
+  remainingBalance: {
+    type: Number,
+    default: 0
+  },
+  receiptGeneratedAt: {
+    type: Date
+  },
+  notes: {
+    type: String
+  },
   amount: {
     type: Number,
     required: true

@@ -1,37 +1,51 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
 import { CalendarDays, Plus, MapPin, Users, Clock, Edit, Trash2 } from 'lucide-react';
 
 const EventsManagement = () => {
+  const toast = useToast();
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ title: '', description: '', date: '', startTime: '', endTime: '', location: '', capacity: '', status: 'Published' });
 
-  const fetchEvents = async () => {
+  const fetchEvents = useCallback(async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const res = await api.get('/events');
-      setEvents(res.data.data);
+      setEvents(res.data?.data || []);
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh events list');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [toast]);
 
-  useEffect(() => { fetchEvents(); }, []);
+  useEffect(() => { 
+    fetchEvents(); 
+  }, [fetchEvents]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
       await api.post('/events/admin', formData);
-      alert('Event created successfully');
-      fetchEvents();
+      toast.success('Event created successfully');
+      fetchEvents(true);
       setShowForm(false);
       setFormData({ title: '', description: '', date: '', startTime: '', endTime: '', location: '', capacity: '', status: 'Published' });
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to create event');
+      toast.error(err.response?.data?.error || 'Failed to create event');
     }
   };
 
@@ -45,17 +59,30 @@ const EventsManagement = () => {
     }
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading events...</div></div>;
+  if (loading && events.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading events...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Events Management</h2>
           <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Organize and manage society events and meetings</p>
         </div>
-        <button 
-          onClick={() => setShowForm(!showForm)}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <RefreshButton
+            onClick={() => fetchEvents(true)}
+            refreshing={refreshing}
+            loading={loading && events.length === 0}
+            title="Refresh events list"
+          />
+          <button 
+            onClick={() => setShowForm(!showForm)}
           style={{
             display: 'flex', alignItems: 'center', gap: '8px',
             backgroundColor: '#10b981', color: 'white', border: 'none',
@@ -69,6 +96,7 @@ const EventsManagement = () => {
           {showForm ? 'View Events' : 'Create Event'}
         </button>
       </div>
+    </div>
 
       {showForm ? (
         <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '32px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0', maxWidth: '800px', margin: '0 auto' }}>

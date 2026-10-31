@@ -1,36 +1,75 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../services/api';
 import { useToast } from '../../context/ToastContext';
-import { Wrench, Plus, CheckCircle, Search, Filter, MapPin, Clock, AlertCircle } from 'lucide-react';
+import RefreshButton from '../../components/shared/RefreshButton';
+import { Wrench, Plus, CheckCircle, Search, Filter, MapPin, Clock, AlertCircle, X } from 'lucide-react';
 
 const RepairsManagement = () => {
   const toast = useToast();
   const [repairs, setRepairs] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
 
   const [formData, setFormData] = useState({ title: '', category: '', description: '', location: '', assignedTo: '' });
 
-  const fetchData = async () => {
+  // 300ms debounce
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  const fetchData = useCallback(async (isRefresh = false, overrides = {}) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      const activeSearch = overrides.search !== undefined ? overrides.search : debouncedSearch;
+      const activeStatus = overrides.status !== undefined ? overrides.status : filterStatus;
+
+      const params = {};
+      if (activeSearch && activeSearch.trim()) params.search = activeSearch.trim();
+      if (activeStatus && activeStatus !== 'All') params.status = activeStatus;
+
       const [resRepairs, resUsers] = await Promise.all([
-        api.get('/repairs/admin'),
+        api.get('/repairs/admin', { params }),
         api.get('/users')
       ]);
-      setRepairs(resRepairs.data.data);
-      setStaff(resUsers.data.data.filter(u => u.role === 'SecurityStaff'));
+      setRepairs(resRepairs.data?.data || []);
+      setStaff((resUsers.data?.data || []).filter(u => u.role === 'SecurityStaff'));
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh repair tasks');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [debouncedSearch, filterStatus, toast]);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { 
+    fetchData(); 
+  }, []);
+
+  // Refetch when search or status filter changes
+  const isFirstMountRef = useRef(true);
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    fetchData(false, { search: debouncedSearch, status: filterStatus });
+  }, [debouncedSearch, filterStatus]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -74,29 +113,43 @@ const RepairsManagement = () => {
     return matchesSearch && matchesStatus;
   });
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading repairs...</div></div>;
+  if (loading && repairs.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading repairs...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Repairs & Maintenance</h2>
           <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Create and track society repair tasks</p>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            backgroundColor: '#10b981', color: 'white', border: 'none',
-            padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
-            fontWeight: '600', transition: 'background 0.2s'
-          }}
-          onMouseOver={e => e.currentTarget.style.backgroundColor = '#059669'}
-          onMouseOut={e => e.currentTarget.style.backgroundColor = '#10b981'}
-        >
-          {showForm ? <Wrench size={18} /> : <Plus size={18} />}
-          {showForm ? 'View Repairs' : 'Create Task'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <RefreshButton
+            onClick={() => fetchData(true)}
+            refreshing={refreshing}
+            loading={loading && repairs.length === 0}
+            title="Refresh repairs list"
+          />
+          <button
+            onClick={() => setShowForm(!showForm)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              backgroundColor: '#10b981', color: 'white', border: 'none',
+              padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
+              fontWeight: '600', transition: 'background 0.2s'
+            }}
+            onMouseOver={e => e.currentTarget.style.backgroundColor = '#059669'}
+            onMouseOut={e => e.currentTarget.style.backgroundColor = '#10b981'}
+          >
+            {showForm ? <Wrench size={18} /> : <Plus size={18} />}
+            {showForm ? 'View Repairs' : 'Create Task'}
+          </button>
+        </div>
       </div>
 
       {showForm ? (
@@ -142,14 +195,36 @@ const RepairsManagement = () => {
         <>
           <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
             <div style={{ position: 'relative', flex: 1, minWidth: '250px' }}>
-              <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />
+              <Search size={18} color="#94a3b8" style={{ position: 'absolute', top: '11px', left: '12px' }} />
               <input
                 type="text"
                 placeholder="Search tasks, locations, or staff..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
+                style={{ width: '100%', padding: '10px 36px 10px 40px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.875rem', boxSizing: 'border-box' }}
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                  title="Clear search"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
             <div style={{ position: 'relative', minWidth: '200px' }}>
               <Filter size={18} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />

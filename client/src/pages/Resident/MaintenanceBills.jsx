@@ -1,9 +1,13 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../services/api';
 import { AuthContext } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { loadRazorpayScript, openRazorpayCheckout } from '../../utils/razorpay';
+import PeriodFilterBar from '../../components/Finance/PeriodFilterBar';
+import RefreshButton from '../../components/shared/RefreshButton';
+import Button from '../../components/ui/Button';
+import { usePeriodFilter } from '../../hooks/usePeriodFilter';
 import {
   IndianRupee,
   FileText,
@@ -17,7 +21,7 @@ import {
   ArrowRight,
   Receipt,
   AlertTriangle,
-  RotateCcw
+  Search
 } from 'lucide-react';
 
 const MaintenanceBills = () => {
@@ -25,8 +29,23 @@ const MaintenanceBills = () => {
   const toast = useToast();
   const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('all'); // 'all', 'unpaid', 'paid'
+  const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
   
+  // Persistent Period Filter State (URL + user-scoped localStorage)
+  const { filterState: periodFilter, applyFilter } = usePeriodFilter('resident_bills', 'all');
+  const prevFilterJsonRef = useRef(JSON.stringify(periodFilter));
+
   // Transaction In-Flight States
   const [processingBillId, setProcessingBillId] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -34,22 +53,71 @@ const MaintenanceBills = () => {
   const [dismissedNotice, setDismissedNotice] = useState(null);
   const [successReceipt, setSuccessReceipt] = useState(null);
 
-  const fetchBills = async () => {
+  const fetchBills = useCallback(async (filterOverride, isRefresh = false, searchOverride) => {
     try {
-      setLoading(true);
-      const res = await api.get('/bills/my');
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const activeFilter = (filterOverride && typeof filterOverride === 'object' && !filterOverride.nativeEvent) 
+        ? filterOverride 
+        : periodFilter;
+      const activeSearch = searchOverride !== undefined ? searchOverride : debouncedSearch;
+
+      const params = {};
+      if (activeFilter.period) params.period = activeFilter.period;
+      if (activeFilter.month) params.month = activeFilter.month;
+      if (activeFilter.year) params.year = activeFilter.year;
+      if (activeFilter.startDate) params.startDate = activeFilter.startDate;
+      if (activeFilter.endDate) params.endDate = activeFilter.endDate;
+      if (activeSearch && activeSearch.trim()) params.search = activeSearch.trim();
+
+      const res = await api.get('/bills/my', { params });
       setBills(res.data.data || []);
     } catch (err) {
       console.error('Failed to fetch bills:', err);
-      setErrorMessage(err.response?.data?.message || err.response?.data?.error || 'Failed to load maintenance bills.');
+      const msg = err.response?.data?.message || err.response?.data?.error || 'Failed to load maintenance bills.';
+      setErrorMessage(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [periodFilter, debouncedSearch, toast]);
 
   useEffect(() => {
     fetchBills();
   }, []);
+
+  // When periodFilter changes from URL or storage, fetch updated data
+  useEffect(() => {
+    const currentJson = JSON.stringify(periodFilter);
+    if (prevFilterJsonRef.current !== currentJson) {
+      prevFilterJsonRef.current = currentJson;
+      fetchBills(periodFilter, true);
+    }
+  }, [periodFilter, fetchBills]);
+
+  // When debounced search changes, fetch updated filtered bills
+  const isSearchMountRef = useRef(true);
+  useEffect(() => {
+    if (isSearchMountRef.current) {
+      isSearchMountRef.current = false;
+      return;
+    }
+    fetchBills(null, true, debouncedSearch);
+  }, [debouncedSearch]);
+
+  const handlePeriodApply = (newFilter) => {
+    const updated = applyFilter(newFilter);
+    prevFilterJsonRef.current = JSON.stringify(updated);
+    fetchBills(updated, true);
+  };
+
+  const handleRefresh = () => {
+    fetchBills(null, true);
+  };
 
   const handlePayNow = async (bill) => {
     // 1. Guard against duplicate clicks & already-paid bills
@@ -154,49 +222,49 @@ const MaintenanceBills = () => {
     switch (status) {
       case 'Paid':
         return {
-          bg: '#ecfdf5',
-          border: '#a7f3d0',
-          text: '#065f46',
+          bg: 'var(--sh-badge-success-bg)',
+          border: 'var(--sh-badge-success-border)',
+          text: 'var(--sh-badge-success-text)',
           label: 'Paid',
           icon: CheckCircle2
         };
       case 'Pending':
         return {
-          bg: '#fffbeb',
-          border: '#fde68a',
-          text: '#92400e',
+          bg: 'var(--sh-badge-warning-bg)',
+          border: 'var(--sh-badge-warning-border)',
+          text: 'var(--sh-badge-warning-text)',
           label: 'Pending',
           icon: Clock
         };
       case 'PaymentInitiated':
         return {
-          bg: '#eff6ff',
-          border: '#bfdbfe',
-          text: '#1e40af',
+          bg: 'var(--sh-badge-info-bg)',
+          border: 'var(--sh-badge-info-border)',
+          text: 'var(--sh-badge-info-text)',
           label: 'Payment Initiated',
           icon: Clock
         };
       case 'Overdue':
         return {
-          bg: '#fef2f2',
-          border: '#fecaca',
-          text: '#991b1b',
+          bg: 'var(--sh-badge-danger-bg)',
+          border: 'var(--sh-badge-danger-border)',
+          text: 'var(--sh-badge-danger-text)',
           label: 'Overdue',
           icon: AlertCircle
         };
       case 'Failed':
         return {
-          bg: '#fef2f2',
-          border: '#fecaca',
-          text: '#b91c1c',
+          bg: 'var(--sh-badge-danger-bg)',
+          border: 'var(--sh-badge-danger-border)',
+          text: 'var(--sh-badge-danger-text)',
           label: 'Failed',
           icon: AlertTriangle
         };
       default:
         return {
-          bg: '#f8fafc',
-          border: '#e2e8f0',
-          text: '#475569',
+          bg: 'var(--sh-badge-neutral-bg)',
+          border: 'var(--sh-badge-neutral-border)',
+          text: 'var(--sh-badge-neutral-text)',
           label: status || 'Pending',
           icon: FileText
         };
@@ -230,82 +298,73 @@ const MaintenanceBills = () => {
       {/* Header and Quick Navigation */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         <div>
-          <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: '#0f172a', margin: '0 0 4px 0' }}>
+          <h2 style={{ fontSize: '1.6rem', fontWeight: '800', color: 'var(--sh-slate-900)', margin: '0 0 4px 0' }}>
             Maintenance & Society Fees
           </h2>
-          <p style={{ margin: 0, fontSize: '0.9rem', color: '#64748b' }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--sh-slate-500)' }}>
             Review your flat maintenance dues and complete secure payments via Razorpay Gateway.
           </p>
         </div>
 
-        <Link
+        <Button
+          as={Link}
           to="/resident/payments"
+          variant="outline"
+          icon={Receipt}
           style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            backgroundColor: '#ffffff',
-            border: '1px solid #cbd5e1',
-            borderRadius: '8px',
-            padding: '10px 18px',
-            color: '#1e293b',
-            textDecoration: 'none',
             fontSize: '0.9rem',
             fontWeight: '600',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-            transition: 'all 0.2s'
+            padding: '10px 18px',
+            textDecoration: 'none'
           }}
-          onMouseOver={(e) => { e.currentTarget.style.borderColor = '#0284c7'; e.currentTarget.style.color = '#0284c7'; }}
-          onMouseOut={(e) => { e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.color = '#1e293b'; }}
         >
-          <Receipt size={18} />
           View Payment History
-        </Link>
+        </Button>
       </div>
 
       {/* Summary KPI Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
-        <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+        <div style={{ backgroundColor: 'var(--sh-white)', border: '1px solid var(--sh-slate-200)', borderRadius: '12px', padding: '20px', boxShadow: 'var(--sh-shadow-xs)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Outstanding Dues</span>
-            <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: totalDue > 0 ? '#fef2f2' : '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', color: totalDue > 0 ? '#dc2626' : '#16a34a' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Outstanding Dues</span>
+            <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: totalDue > 0 ? 'var(--sh-badge-danger-bg)' : 'var(--sh-badge-success-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: totalDue > 0 ? 'var(--sh-badge-danger-text)' : 'var(--sh-badge-success-text)' }}>
               <IndianRupee size={20} />
             </div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: totalDue > 0 ? '#dc2626' : '#0f172a' }}>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: totalDue > 0 ? 'var(--sh-badge-danger-text)' : 'var(--sh-slate-900)' }}>
             ₹{totalDue.toLocaleString()}
           </div>
-          <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+          <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--sh-slate-500)' }}>
             {unpaidCount} unpaid {unpaidCount === 1 ? 'bill' : 'bills'} pending settlement
           </p>
         </div>
 
-        <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+        <div style={{ backgroundColor: 'var(--sh-white)', border: '1px solid var(--sh-slate-200)', borderRadius: '12px', padding: '20px', boxShadow: 'var(--sh-shadow-xs)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Total Paid To Date</span>
-            <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#059669' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Total Paid To Date</span>
+            <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: 'var(--sh-badge-success-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sh-badge-success-text)' }}>
               <ShieldCheck size={20} />
             </div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#059669' }}>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--sh-badge-success-text)' }}>
             ₹{totalPaid.toLocaleString()}
           </div>
-          <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+          <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--sh-slate-500)' }}>
             Verified on society ledger
           </p>
         </div>
 
-        <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+        <div style={{ backgroundColor: 'var(--sh-white)', border: '1px solid var(--sh-slate-200)', borderRadius: '12px', padding: '20px', boxShadow: 'var(--sh-shadow-xs)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Assigned Flat</span>
-            <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: '#f0f9ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0284c7' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Assigned Flat</span>
+            <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: 'var(--sh-badge-info-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sh-badge-info-text)' }}>
               <FileText size={20} />
             </div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#0f172a' }}>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--sh-slate-900)' }}>
             Flat {user?.flatNumber || 'N/A'}
           </div>
-          <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+          <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--sh-slate-500)' }}>
             Tenant-isolated billing
           </p>
         </div>
@@ -313,13 +372,13 @@ const MaintenanceBills = () => {
 
       {/* Verification In-Flight Overlay / Banner */}
       {isVerifying && (
-        <div style={{ backgroundColor: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '10px', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <Loader2 size={24} style={{ color: '#2563eb', animation: 'spin 1s linear infinite' }} />
+        <div style={{ backgroundColor: 'var(--sh-badge-info-bg)', border: '1px solid var(--sh-badge-info-border)', borderRadius: '10px', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <Loader2 size={24} style={{ color: 'var(--sh-badge-info-text)', animation: 'spin 1s linear infinite' }} />
           <div>
-            <h4 style={{ margin: '0 0 2px 0', fontSize: '0.95rem', fontWeight: '700', color: '#1e40af' }}>
+            <h4 style={{ margin: '0 0 2px 0', fontSize: '0.95rem', fontWeight: '700', color: 'var(--sh-badge-info-text)' }}>
               Verifying Payment with Society Ledger...
             </h4>
-            <p style={{ margin: 0, fontSize: '0.85rem', color: '#3b82f6' }}>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--sh-slate-600)' }}>
               Please do not refresh the page. We are securely validating your transaction signature and generating your receipt.
             </p>
           </div>
@@ -328,17 +387,17 @@ const MaintenanceBills = () => {
 
       {/* Error Alert Banner */}
       {errorMessage && (
-        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '14px 18px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+        <div style={{ backgroundColor: 'var(--sh-badge-danger-bg)', border: '1px solid var(--sh-badge-danger-border)', borderRadius: '10px', padding: '14px 18px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-            <AlertCircle size={20} style={{ color: '#dc2626', marginTop: '2px', flexShrink: 0 }} />
+            <AlertCircle size={20} style={{ color: 'var(--sh-badge-danger-text)', marginTop: '2px', flexShrink: 0 }} />
             <div>
-              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '600', color: '#991b1b' }}>Payment Error</p>
-              <p style={{ margin: '2px 0 0 0', fontSize: '0.85rem', color: '#b91c1c' }}>{errorMessage}</p>
+              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '600', color: 'var(--sh-badge-danger-text)' }}>Payment Error</p>
+              <p style={{ margin: '2px 0 0 0', fontSize: '0.85rem', color: 'var(--sh-slate-600)' }}>{errorMessage}</p>
             </div>
           </div>
           <button
             onClick={() => setErrorMessage(null)}
-            style={{ background: 'transparent', border: 'none', color: '#991b1b', cursor: 'pointer', padding: '4px' }}
+            style={{ background: 'transparent', border: 'none', color: 'var(--sh-badge-danger-text)', cursor: 'pointer', padding: '4px' }}
           >
             <X size={18} />
           </button>
@@ -347,17 +406,17 @@ const MaintenanceBills = () => {
 
       {/* Dismissed / Cancelled Notice Banner */}
       {dismissedNotice && (
-        <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '14px 18px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+        <div style={{ backgroundColor: 'var(--sh-badge-warning-bg)', border: '1px solid var(--sh-badge-warning-border)', borderRadius: '10px', padding: '14px 18px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-            <AlertTriangle size={20} style={{ color: '#d97706', marginTop: '2px', flexShrink: 0 }} />
+            <AlertTriangle size={20} style={{ color: 'var(--sh-badge-warning-text)', marginTop: '2px', flexShrink: 0 }} />
             <div>
-              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '600', color: '#92400e' }}>Payment Cancelled</p>
-              <p style={{ margin: '2px 0 0 0', fontSize: '0.85rem', color: '#b45309' }}>{dismissedNotice}</p>
+              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '600', color: 'var(--sh-badge-warning-text)' }}>Payment Cancelled</p>
+              <p style={{ margin: '2px 0 0 0', fontSize: '0.85rem', color: 'var(--sh-slate-600)' }}>{dismissedNotice}</p>
             </div>
           </div>
           <button
             onClick={() => setDismissedNotice(null)}
-            style={{ background: 'transparent', border: 'none', color: '#92400e', cursor: 'pointer', padding: '4px' }}
+            style={{ background: 'transparent', border: 'none', color: 'var(--sh-badge-warning-text)', cursor: 'pointer', padding: '4px' }}
           >
             <X size={18} />
           </button>
@@ -367,62 +426,80 @@ const MaintenanceBills = () => {
       {/* Payment Success Confirmation Modal */}
       {successReceipt && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(3px)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', maxWidth: '480px', width: '100%', padding: '28px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)', border: '1px solid #e2e8f0', animation: 'scaleUp 0.2s ease-out' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto' }}>
+          <div style={{ backgroundColor: 'var(--sh-white)', borderRadius: '16px', maxWidth: '480px', width: '100%', padding: '28px', boxShadow: 'var(--sh-shadow-lg)', border: '1px solid var(--sh-slate-200)', animation: 'scaleUp 0.2s ease-out' }}>
+            <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'var(--sh-badge-success-bg)', color: 'var(--sh-badge-success-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto' }}>
               <CheckCircle2 size={32} />
             </div>
             
-            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.3rem', fontWeight: '800', textAlign: 'center', color: '#0f172a' }}>
+            <h3 style={{ margin: '0 0 4px 0', fontSize: '1.3rem', fontWeight: '800', textAlign: 'center', color: 'var(--sh-slate-900)' }}>
               Payment Verified Successfully!
             </h3>
-            <p style={{ margin: '0 0 20px 0', fontSize: '0.875rem', color: '#64748b', textAlign: 'center' }}>
+            <p style={{ margin: '0 0 20px 0', fontSize: '0.875rem', color: 'var(--sh-slate-500)', textAlign: 'center' }}>
               Your maintenance fee has been settled and recorded in the society ledger.
             </p>
 
-            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: '#64748b' }}>
+            <div style={{ backgroundColor: 'var(--sh-slate-100)', border: '1px solid var(--sh-slate-200)', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: 'var(--sh-slate-500)' }}>
                 <span>Receipt Number:</span>
-                <span style={{ fontWeight: '700', color: '#0f172a', fontFamily: 'monospace' }}>{successReceipt.receiptNumber}</span>
+                <span style={{ fontWeight: '700', color: 'var(--sh-slate-900)', fontFamily: 'monospace' }}>{successReceipt.receiptNumber}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: '#64748b' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: 'var(--sh-slate-500)' }}>
                 <span>Billing Period:</span>
-                <span style={{ fontWeight: '600', color: '#0f172a' }}>{successReceipt.month}</span>
+                <span style={{ fontWeight: '600', color: 'var(--sh-slate-900)' }}>{successReceipt.month}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: '#64748b' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: 'var(--sh-slate-500)' }}>
                 <span>Confirmed Amount:</span>
-                <span style={{ fontWeight: '800', color: '#059669', fontSize: '1rem' }}>₹{successReceipt.amount}</span>
+                <span style={{ fontWeight: '800', color: 'var(--sh-badge-success-text)', fontSize: '1rem' }}>₹{successReceipt.amount}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: '#64748b' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: 'var(--sh-slate-500)' }}>
                 <span>Payment Reference:</span>
-                <span style={{ fontWeight: '600', color: '#0f172a', fontSize: '0.8rem', fontFamily: 'monospace' }}>{successReceipt.paymentId}</span>
+                <span style={{ fontWeight: '600', color: 'var(--sh-slate-900)', fontSize: '0.8rem', fontFamily: 'monospace' }}>{successReceipt.paymentId}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: '#64748b' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '0.85rem', color: 'var(--sh-slate-500)' }}>
                 <span>Settlement Date:</span>
-                <span style={{ color: '#0f172a' }}>{successReceipt.paidAt}</span>
+                <span style={{ color: 'var(--sh-slate-900)' }}>{successReceipt.paidAt}</span>
               </div>
             </div>
 
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button
+              <Button
+                variant="outline"
                 onClick={() => setSuccessReceipt(null)}
-                style={{ flex: 1, padding: '10px 16px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', color: '#334155', fontWeight: '600', cursor: 'pointer' }}
+                style={{ flex: 1, padding: '10px 16px', fontSize: '0.875rem' }}
               >
                 Close
-              </button>
-              <Link
+              </Button>
+              <Button
+                as={Link}
                 to="/resident/payments"
-                style={{ flex: 1, padding: '10px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#0284c7', color: '#ffffff', fontWeight: '600', textDecoration: 'none', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                variant="blue"
+                icon={ArrowRight}
+                iconPosition="right"
+                style={{ flex: 1, padding: '10px 16px', fontSize: '0.875rem', textDecoration: 'none' }}
               >
-                View History <ArrowRight size={16} />
-              </Link>
+                View History
+              </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Filter Tabs */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
-        <div style={{ display: 'flex', gap: '8px' }}>
+      {/* Period Filter Bar */}
+      <PeriodFilterBar
+        initialPeriod={periodFilter.period}
+        initialMonth={periodFilter.month}
+        initialYear={periodFilter.year}
+        initialStartDate={periodFilter.startDate}
+        initialEndDate={periodFilter.endDate}
+        onApply={handlePeriodApply}
+        onRefresh={handleRefresh}
+        loading={loading}
+        refreshing={refreshing}
+      />
+
+      {/* Filter Tabs & Search */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--sh-slate-200)', paddingBottom: '12px', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           {[
             { id: 'all', label: `All Bills (${bills.length})` },
             { id: 'unpaid', label: `Unpaid (${unpaidCount})` },
@@ -432,9 +509,9 @@ const MaintenanceBills = () => {
               key={tab.id}
               onClick={() => setFilter(tab.id)}
               style={{
-                backgroundColor: filter === tab.id ? '#0f172a' : '#f1f5f9',
-                color: filter === tab.id ? '#ffffff' : '#475569',
-                border: 'none',
+                backgroundColor: filter === tab.id ? 'var(--sh-primary-500)' : 'var(--sh-slate-100)',
+                color: filter === tab.id ? '#ffffff' : 'var(--sh-slate-600)',
+                border: filter === tab.id ? '1px solid var(--sh-primary-500)' : '1px solid var(--sh-slate-200)',
                 borderRadius: '8px',
                 padding: '8px 16px',
                 fontSize: '0.85rem',
@@ -448,35 +525,105 @@ const MaintenanceBills = () => {
           ))}
         </div>
 
-        <button
-          onClick={fetchBills}
-          disabled={loading}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'transparent', border: 'none', color: '#64748b', fontSize: '0.85rem', cursor: 'pointer', padding: '6px 10px', borderRadius: '6px' }}
-          title="Refresh bills"
-        >
-          <RotateCcw size={14} className={loading ? 'animate-spin' : ''} />
-          Refresh
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ position: 'relative', width: '220px' }}>
+            <Search size={14} color="var(--sh-slate-400)" style={{ position: 'absolute', top: '9px', left: '10px' }} />
+            <input
+              type="text"
+              placeholder="Search bill or month..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '6px 28px 6px 30px',
+                borderRadius: '6px',
+                border: '1px solid var(--sh-slate-300)',
+                fontSize: '0.8rem',
+                backgroundColor: 'var(--sh-white)',
+                color: 'var(--sh-slate-900)',
+                boxSizing: 'border-box'
+              }}
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setDebouncedSearch('');
+                  fetchBills(null, false, '');
+                }}
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  right: '6px',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--sh-slate-400)',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+                title="Clear search"
+                aria-label="Clear search"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          <RefreshButton
+            onClick={handleRefresh}
+            refreshing={refreshing}
+            loading={loading}
+            size="sm"
+            title="Refresh bills"
+          />
+        </div>
       </div>
 
       {/* Bills Cards List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {loading ? (
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '60px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+          <div style={{ backgroundColor: 'var(--sh-white)', borderRadius: '12px', border: '1px solid var(--sh-slate-200)', padding: '60px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
             <Loader2 size={32} style={{ color: '#0284c7', animation: 'spin 1s linear infinite' }} />
-            <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>Loading maintenance bills from backend...</p>
+            <p style={{ margin: 0, color: 'var(--sh-slate-500)', fontSize: '0.9rem' }}>Loading maintenance bills from backend...</p>
           </div>
         ) : filteredBills.length === 0 ? (
-          <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '60px', textAlign: 'center' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: '#f1f5f9', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto' }}>
+          <div style={{ backgroundColor: 'var(--sh-white)', borderRadius: '12px', border: '1px solid var(--sh-slate-200)', padding: '60px', textAlign: 'center' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: 'var(--sh-slate-100)', color: 'var(--sh-slate-400)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto' }}>
               <FileText size={24} />
             </div>
-            <h3 style={{ margin: '0 0 6px 0', fontSize: '1.1rem', fontWeight: '700', color: '#1e293b' }}>
-              No bills found
+            <h3 style={{ margin: '0 0 6px 0', fontSize: '1.1rem', fontWeight: '700', color: 'var(--sh-slate-900)' }}>
+              {searchTerm ? 'No matching bills found' : 'No bills found'}
             </h3>
-            <p style={{ margin: 0, fontSize: '0.875rem', color: '#64748b' }}>
-              {filter === 'unpaid' ? 'You have no outstanding dues. Great job!' : filter === 'paid' ? 'No paid bills found.' : 'No maintenance bills have been generated for your flat.'}
+            <p style={{ margin: searchTerm ? '0 0 16px 0' : 0, fontSize: '0.875rem', color: 'var(--sh-slate-500)' }}>
+              {searchTerm 
+                ? `No bills match your query "${searchTerm}". Try checking another keyword or month.`
+                : (filter === 'unpaid' ? 'You have no outstanding dues. Great job!' : filter === 'paid' ? 'No paid bills found.' : 'No maintenance bills have been generated for your flat.')}
             </p>
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setDebouncedSearch('');
+                  fetchBills(null, false, '');
+                }}
+                style={{
+                  padding: '7px 16px',
+                  backgroundColor: '#0284c7',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '0.8125rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                Clear Search
+              </button>
+            )}
           </div>
         ) : (
           filteredBills.map((bill) => {
@@ -490,40 +637,40 @@ const MaintenanceBills = () => {
               <div
                 key={bill._id}
                 style={{
-                  backgroundColor: '#ffffff',
+                  backgroundColor: 'var(--sh-white)',
                   borderRadius: '12px',
-                  border: isProcessingThisBill ? '2px solid #0284c7' : '1px solid #e2e8f0',
+                  border: isProcessingThisBill ? '2px solid #0284c7' : '1px solid var(--sh-slate-200)',
                   padding: '24px',
                   display: 'flex',
                   flexWrap: 'wrap',
                   gap: '20px',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                  boxShadow: 'var(--sh-shadow-xs)',
                   transition: 'all 0.2s'
                 }}
               >
                 {/* Left: Bill Details */}
                 <div style={{ display: 'flex', gap: '16px', alignItems: 'center', minWidth: '260px' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'var(--sh-slate-100)', border: '1px solid var(--sh-slate-200)', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Calendar size={22} />
                   </div>
 
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                      <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '700', color: '#0f172a' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '700', color: 'var(--sh-slate-900)' }}>
                         {bill.type || 'Maintenance Bill'}
                       </h3>
-                      <span style={{ fontSize: '0.75rem', color: '#64748b', backgroundColor: '#f1f5f9', padding: '2px 8px', borderRadius: '4px', fontFamily: 'monospace' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--sh-slate-500)', backgroundColor: 'var(--sh-slate-100)', padding: '2px 8px', borderRadius: '4px', fontFamily: 'monospace' }}>
                         REF: {bill._id.slice(-6).toUpperCase()}
                       </span>
                     </div>
 
-                    <p style={{ margin: '0 0 4px 0', fontSize: '0.85rem', color: '#475569', fontWeight: '500' }}>
+                    <p style={{ margin: '0 0 4px 0', fontSize: '0.85rem', color: 'var(--sh-slate-600)', fontWeight: '500' }}>
                       Billing Period: <strong>{bill.month}</strong> (Flat {bill.flatNumber || user?.flatNumber})
                     </p>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: isOverdue ? '#dc2626' : '#64748b' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: isOverdue ? 'var(--sh-badge-danger-text)' : 'var(--sh-slate-500)' }}>
                       <Clock size={13} />
                       <span>Due: <strong>{new Date(bill.dueDate).toLocaleDateString()}</strong></span>
                       {isOverdue && <span style={{ fontWeight: '700', textTransform: 'uppercase', fontSize: '0.7rem' }}>[Overdue]</span>}
@@ -534,8 +681,8 @@ const MaintenanceBills = () => {
                 {/* Right: Amount & Actions */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap' }}>
                   <div style={{ textAlign: 'right', minWidth: '110px' }}>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Amount Due</span>
-                    <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#0f172a' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--sh-slate-500)', fontWeight: '600', textTransform: 'uppercase' }}>Amount Due</span>
+                    <div style={{ fontSize: '1.6rem', fontWeight: '800', color: 'var(--sh-slate-900)' }}>
                       ₹{Number(bill.amount).toLocaleString()}
                     </div>
                   </div>

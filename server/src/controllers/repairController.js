@@ -110,10 +110,47 @@ exports.createFromComplaint = async (req, res, next) => {
 
 exports.getAdminRepairs = async (req, res, next) => {
   try {
-    const repairs = await Repair.find({ societyId: req.user.societyId })
-      .populate('assignedTo', 'name')
-      .populate('relatedComplaintId');
-    res.status(200).json({ success: true, data: repairs });
+    const andConditions = [{ societyId: req.user.societyId }];
+
+    if (req.query.status && req.query.status !== 'All') {
+      andConditions.push({ status: req.query.status });
+    }
+
+    if (req.query.search && req.query.search.trim()) {
+      const searchRegex = new RegExp(req.query.search.trim(), 'i');
+
+      const matchingStaff = await User.find({
+        societyId: req.user.societyId,
+        $or: [
+          { name: searchRegex },
+          { mobile: searchRegex }
+        ]
+      }).select('_id');
+
+      const matchingStaffIds = matchingStaff.map(s => s._id);
+
+      const searchOr = [
+        { title: searchRegex },
+        { category: searchRegex },
+        { description: searchRegex },
+        { location: searchRegex }
+      ];
+
+      if (matchingStaffIds.length > 0) {
+        searchOr.push({ assignedTo: { $in: matchingStaffIds } });
+      }
+
+      andConditions.push({ $or: searchOr });
+    }
+
+    const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+
+    const repairs = await Repair.find(filter)
+      .populate('assignedTo', 'name email mobile')
+      .populate('relatedComplaintId')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, count: repairs.length, data: repairs });
   } catch (err) {
     next(err);
   }
@@ -121,8 +158,24 @@ exports.getAdminRepairs = async (req, res, next) => {
 
 exports.getStaffRepairs = async (req, res, next) => {
   try {
-    const repairs = await Repair.find({ assignedTo: req.user.id, societyId: req.user.societyId });
-    res.status(200).json({ success: true, data: repairs });
+    const filter = { assignedTo: req.user.id, societyId: req.user.societyId };
+
+    if (req.query.status && req.query.status !== 'All') {
+      filter.status = req.query.status;
+    }
+
+    if (req.query.search && req.query.search.trim()) {
+      const searchRegex = new RegExp(req.query.search.trim(), 'i');
+      filter.$or = [
+        { title: searchRegex },
+        { category: searchRegex },
+        { description: searchRegex },
+        { location: searchRegex }
+      ];
+    }
+
+    const repairs = await Repair.find(filter).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, count: repairs.length, data: repairs });
   } catch (err) {
     next(err);
   }

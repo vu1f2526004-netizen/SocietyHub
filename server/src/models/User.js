@@ -51,6 +51,26 @@ const UserSchema = new mongoose.Schema({
     enum: ['PendingApproval', 'Active', 'Rejected', 'Suspended'],
     default: 'Active'
   },
+  financialEffectiveDate: {
+    type: Date,
+    default: null
+  },
+  membershipStartDate: {
+    type: Date,
+    default: null
+  },
+  approvedAt: {
+    type: Date,
+    default: null
+  },
+  hasTransferredArrears: {
+    type: Boolean,
+    default: false
+  },
+  transferredArrearsNotes: {
+    type: String,
+    trim: true
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -62,6 +82,11 @@ UserSchema.index({ societyId: 1, role: 1 });
 // Encrypt password using bcrypt
 UserSchema.pre('save', async function(next) {
   if (!this.isModified('password')) {
+    if (typeof next === 'function') return next();
+    return;
+  }
+  // Prevent double-hashing if password is already a valid bcrypt hash
+  if (typeof this.password === 'string' && /^\$2[abxy]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(this.password)) {
     if (typeof next === 'function') return next();
     return;
   }
@@ -77,7 +102,7 @@ UserSchema.methods.getSignedJwtToken = function() {
     payload.societyId = this.societyId;
   }
   return jwt.sign(payload, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRE
+    expiresIn: process.env.JWT_EXPIRE || '30d'
   });
 };
 

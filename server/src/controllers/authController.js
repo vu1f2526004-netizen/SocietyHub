@@ -4,49 +4,85 @@ const User = require('../models/User');
 const Society = require('../models/Society');
 const { notifyAdminNewResidentRegistration } = require('../services/notificationService');
 
+// Explicit Canonical Role Mapping:
+// Maps UI role representations (e.g., 'Security', 'Security Staff') to canonical DB role 'SecurityStaff'
+const normalizeRole = (role) => {
+  if (!role || typeof role !== 'string') return null;
+  const cleaned = role.trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (cleaned === 'security' || cleaned === 'securitystaff' || cleaned === 'guard' || cleaned === 'staff') {
+    return 'SecurityStaff';
+  }
+  if (cleaned === 'resident') {
+    return 'Resident';
+  }
+  if (cleaned === 'admin' || cleaned === 'secretary') {
+    return 'Admin';
+  }
+  return role.trim();
+};
+
 // @desc      Login user
 // @route     POST /api/auth/login
 // @access    Public
 exports.login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, role } = req.body;
 
     // Validate email and password
     if (!email || !password) {
       return next(new ErrorResponse('Please provide an email and password', 400));
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const normalizedPassword = password.trim();
+    // Exact email normalization: trim surrounding whitespace and convert to lowercase without altering dots
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedPassword = String(password).trim();
+
+    console.log(`[AUTH LOGIN] Attempt: email="${normalizedEmail}", roleRequested="${role || 'Any'}"`);
 
     // Check for user
     const user = await User.findOne({ email: normalizedEmail }).select('+password');
 
     if (!user) {
+      console.log(`[AUTH LOGIN REJECTED] Unknown email: "${normalizedEmail}"`);
       return next(new ErrorResponse('Invalid credentials', 401));
+    }
+
+    // Role mapping & verification if role was specified
+    if (role) {
+      const canonicalRequestedRole = normalizeRole(role);
+      if (canonicalRequestedRole && user.role !== canonicalRequestedRole) {
+        console.log(`[AUTH LOGIN REJECTED] Role mismatch for "${normalizedEmail}": user role is ${user.role}, requested ${canonicalRequestedRole}`);
+        return next(new ErrorResponse(`Invalid credentials for ${role} portal. Your account is registered as ${user.role}.`, 401));
+      }
     }
 
     // Check if password matches
     const isMatch = await user.matchPassword(normalizedPassword);
 
     if (!isMatch) {
+      console.log(`[AUTH LOGIN REJECTED] Password mismatch for "${normalizedEmail}"`);
       return next(new ErrorResponse('Invalid credentials', 401));
     }
 
     // Check account status
     if (user.status === 'PendingApproval') {
+      console.log(`[AUTH LOGIN BLOCKED] Pending approval: "${normalizedEmail}"`);
       return next(new ErrorResponse('Your account registration is pending administrator approval', 403));
     }
     if (user.status === 'Rejected') {
+      console.log(`[AUTH LOGIN BLOCKED] Registration rejected: "${normalizedEmail}"`);
       return next(new ErrorResponse('Your registration request was rejected by the society administrator', 403));
     }
     if (user.status === 'Suspended') {
+      console.log(`[AUTH LOGIN BLOCKED] Account suspended: "${normalizedEmail}"`);
       return next(new ErrorResponse('Your account has been suspended', 403));
     }
     if (user.status !== 'Active') {
+      console.log(`[AUTH LOGIN BLOCKED] Account status not active (${user.status}): "${normalizedEmail}"`);
       return next(new ErrorResponse('Account is not active', 403));
     }
 
+    console.log(`[AUTH LOGIN SUCCESS] User: "${user.name}", Role: "${user.role}", Status: "${user.status}", SocietyId: "${user.societyId}"`);
     sendTokenResponse(user, 200, res);
   } catch (err) {
     next(err);

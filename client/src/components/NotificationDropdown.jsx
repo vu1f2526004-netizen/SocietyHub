@@ -197,7 +197,7 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
               alignItems: 'center',
               justifyContent: 'center',
               padding: '0 3px',
-              border: '2px solid white',
+              border: '2px solid var(--sh-white)',
               boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
             }}
           >
@@ -215,10 +215,10 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
             right: 0,
             width: '360px',
             maxWidth: 'calc(100vw - 32px)',
-            backgroundColor: 'white',
+            backgroundColor: 'var(--sh-white)',
             borderRadius: '12px',
-            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08)',
-            border: '1px solid #e2e8f0',
+            boxShadow: '0 12px 32px -4px rgba(0, 0, 0, 0.25), 0 4px 12px rgba(0, 0, 0, 0.1)',
+            border: '1px solid var(--sh-slate-200)',
             zIndex: 1000,
             display: 'flex',
             flexDirection: 'column',
@@ -230,20 +230,20 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
           <div
             style={{
               padding: '14px 18px',
-              borderBottom: '1px solid #f1f5f9',
+              borderBottom: '1px solid var(--sh-slate-200)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              backgroundColor: '#fafafa'
+              backgroundColor: 'var(--sh-slate-100)'
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontWeight: '700', fontSize: '0.95rem', color: '#0f172a' }}>Notifications</span>
+              <span style={{ fontWeight: '700', fontSize: '0.95rem', color: 'var(--sh-slate-900)' }}>Notifications</span>
               {unreadCount > 0 && (
                 <span
                   style={{
-                    backgroundColor: '#fee2e2',
-                    color: '#dc2626',
+                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                    color: '#EF4444',
                     fontSize: '0.72rem',
                     fontWeight: '700',
                     padding: '2px 8px',
@@ -283,7 +283,7 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
           {/* List Content */}
           <div style={{ maxHeight: '380px', overflowY: 'auto' }}>
             {loading && notifications.length === 0 ? (
-              <div style={{ padding: '36px 20px', textAlign: 'center', color: '#94a3b8' }}>
+              <div style={{ padding: '36px 20px', textAlign: 'center', color: 'var(--sh-slate-400)' }}>
                 <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px auto' }} />
                 <span style={{ fontSize: '0.85rem' }}>Loading notifications...</span>
               </div>
@@ -292,12 +292,12 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
                 {error}
               </div>
             ) : notifications.length === 0 ? (
-              <div style={{ padding: '40px 20px', textAlign: 'center', color: '#64748b' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px auto' }}>
+              <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--sh-slate-500)' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: 'var(--sh-slate-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px auto' }}>
                   <Bell size={20} color="#94a3b8" />
                 </div>
-                <div style={{ fontWeight: '600', color: '#334155', fontSize: '0.9rem' }}>All caught up!</div>
-                <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '2px' }}>No new notifications right now.</div>
+                <div style={{ fontWeight: '600', color: 'var(--sh-slate-900)', fontSize: '0.9rem' }}>All caught up!</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--sh-slate-400)', marginTop: '2px' }}>No new notifications right now.</div>
               </div>
             ) : (
               notifications.slice(0, 15).map(n => (
@@ -306,31 +306,31 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
                   onClick={() => handleNotificationClick(n)}
                   style={{
                     padding: '12px 18px',
-                    borderBottom: '1px solid #f8fafc',
+                    borderBottom: '1px solid var(--sh-slate-100)',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'flex-start',
                     gap: '12px',
-                    backgroundColor: n.read ? 'white' : '#f0fdf4',
+                    backgroundColor: n.read ? 'var(--sh-white)' : 'rgba(16, 185, 129, 0.08)',
                     borderLeft: n.read ? '3px solid transparent' : '3px solid #10b981',
                     transition: 'background-color 0.15s ease'
                   }}
-                  onMouseOver={e => e.currentTarget.style.backgroundColor = n.read ? '#f8fafc' : '#eafaf1'}
-                  onMouseOut={e => e.currentTarget.style.backgroundColor = n.read ? 'white' : '#f0fdf4'}
+                  onMouseOver={e => e.currentTarget.style.backgroundColor = 'var(--sh-slate-100)'}
+                  onMouseOut={e => e.currentTarget.style.backgroundColor = n.read ? 'var(--sh-white)' : 'rgba(16, 185, 129, 0.08)'}
                 >
                   <div style={{ marginTop: '2px', flexShrink: 0 }}>
                     {getNotificationIcon(n.type, n.title)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
-                      <span style={{ fontWeight: n.read ? '600' : '700', fontSize: '0.84rem', color: '#0f172a', lineHeight: 1.3 }}>
+                      <span style={{ fontWeight: n.read ? '600' : '700', fontSize: '0.84rem', color: 'var(--sh-slate-900)', lineHeight: 1.3 }}>
                         {n.title}
                       </span>
-                      <span style={{ fontSize: '0.7rem', color: '#94a3b8', flexShrink: 0 }}>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--sh-slate-400)', flexShrink: 0 }}>
                         {formatTime(n.createdAt)}
                       </span>
                     </div>
-                    <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: '#475569', lineHeight: 1.4, wordBreak: 'break-word' }}>
+                    <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: 'var(--sh-slate-600)', lineHeight: 1.4, wordBreak: 'break-word' }}>
                       {n.message}
                     </p>
                     {n.link && (
@@ -348,7 +348,7 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
                         background: 'transparent',
                         border: 'none',
                         cursor: 'pointer',
-                        color: '#94a3b8',
+                        color: 'var(--sh-slate-400)',
                         padding: '4px',
                         display: 'flex',
                         alignItems: 'center',
@@ -357,7 +357,7 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
                         flexShrink: 0
                       }}
                       onMouseOver={e => e.currentTarget.style.color = '#10b981'}
-                      onMouseOut={e => e.currentTarget.style.color = '#94a3b8'}
+                      onMouseOut={e => e.currentTarget.style.color = 'var(--sh-slate-400)'}
                     >
                       <Check size={14} />
                     </button>
@@ -371,9 +371,9 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
           <div
             style={{
               padding: '10px 18px',
-              borderTop: '1px solid #f1f5f9',
+              borderTop: '1px solid var(--sh-slate-200)',
               textAlign: 'center',
-              backgroundColor: '#fafafa'
+              backgroundColor: 'var(--sh-slate-100)'
             }}
           >
             <button
@@ -384,14 +384,14 @@ const NotificationDropdown = ({ userRole = 'Resident' }) => {
               style={{
                 background: 'none',
                 border: 'none',
-                color: '#64748b',
+                color: 'var(--sh-slate-600)',
                 cursor: 'pointer',
                 fontSize: '0.8rem',
                 fontWeight: '600',
                 padding: '4px 8px'
               }}
-              onMouseOver={e => e.currentTarget.style.color = '#0f172a'}
-              onMouseOut={e => e.currentTarget.style.color = '#64748b'}
+              onMouseOver={e => e.currentTarget.style.color = 'var(--sh-slate-900)'}
+              onMouseOut={e => e.currentTarget.style.color = 'var(--sh-slate-600)'}
             >
               View all notifications →
             </button>

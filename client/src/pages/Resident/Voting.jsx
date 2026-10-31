@@ -1,32 +1,54 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
 import { Vote, Clock, CheckCircle, BarChart3, Info } from 'lucide-react';
 
 const Voting = () => {
+  const toast = useToast();
   const [polls, setPolls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [votingId, setVotingId] = useState(null);
 
-  const fetchPolls = async () => {
+  const fetchPolls = useCallback(async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const res = await api.get('/polls');
-      setPolls(res.data.data);
+      setPolls(res.data?.data || []);
+      if (isRefresh) {
+        toast.success('Polls updated');
+      }
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh polls');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [toast]);
 
-  useEffect(() => { fetchPolls(); }, []);
+  useEffect(() => {
+    fetchPolls();
+  }, [fetchPolls]);
 
   const handleVote = async (pollId, optionId) => {
+    if (votingId) return;
     try {
+      setVotingId(`${pollId}_${optionId}`);
       await api.post(`/polls/${pollId}/vote`, { optionId });
-      alert('Vote cast successfully!');
+      toast.success('Vote cast successfully!');
       fetchPolls();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to vote');
+      toast.error(err.response?.data?.error || 'Failed to vote');
+    } finally {
+      setVotingId(null);
     }
   };
 
@@ -39,13 +61,22 @@ const Voting = () => {
     }
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading polls...</div></div>;
+  if (loading && polls.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading polls...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-      <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Society Voting & Decisions</h2>
-        <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Participate in community polls and view decisions</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Society Voting & Decisions</h2>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Participate in community polls and view decisions</p>
+        </div>
+        <RefreshButton onRefresh={() => fetchPolls(true)} loading={refreshing} title="Refresh polls" />
       </div>
 
       <div style={{ display: 'grid', gap: '24px' }}>

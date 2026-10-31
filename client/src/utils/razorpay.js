@@ -95,8 +95,8 @@ export const openRazorpayCheckout = ({
   // Guard against unconfigured or mock credentials to prevent Razorpay modal "Oops! Something went wrong" crash
   if (!isRazorpayKeyConfigured(razorpayKey) || isMock || (order?.id && order.id.startsWith('order_mock_'))) {
     const errorMsg = !isRazorpayKeyConfigured(razorpayKey)
-      ? 'Razorpay Test Key ID is not configured (found placeholder or missing key). Please configure VITE_RAZORPAY_KEY_ID in client/.env and RAZORPAY_KEY_ID in server/.env with your valid Razorpay Test Key (starts with rzp_test_) to open Checkout.'
-      : 'Razorpay is running in Mock Mode because RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are not configured on the server. Add your Razorpay Test Key pair to server/.env to launch the live Razorpay Checkout modal.';
+      ? 'Razorpay Key ID is not configured (found placeholder or missing key). Please configure VITE_RAZORPAY_KEY_ID in client/.env and RAZORPAY_KEY_ID in server/.env with your valid Razorpay Key (rzp_test_* or rzp_live_*) to open Checkout.'
+      : 'Razorpay is running in Mock Mode because RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are not configured on the server. Add your Razorpay Key pair to server/.env to launch the live Razorpay Checkout modal.';
 
     if (typeof onFailure === 'function') {
       onFailure({

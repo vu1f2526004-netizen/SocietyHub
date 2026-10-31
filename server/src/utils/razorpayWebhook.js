@@ -20,13 +20,16 @@ function verifyWebhookSignature(rawBody, signature, secret) {
   }
 
   try {
+    const cleanSecret = secret.trim();
+    const cleanSignature = signature.trim().toLowerCase();
+
     const expectedSignature = crypto
-      .createHmac('sha256', secret)
+      .createHmac('sha256', cleanSecret)
       .update(rawBody)
       .digest('hex');
 
     const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
-    const actualBuffer = Buffer.from(signature, 'utf8');
+    const actualBuffer = Buffer.from(cleanSignature, 'utf8');
 
     // Constant-time length and contents comparison
     if (expectedBuffer.length !== actualBuffer.length) {

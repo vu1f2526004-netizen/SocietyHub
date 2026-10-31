@@ -1,26 +1,40 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
 import { Vote, Plus, BarChart3, CheckCircle, Clock } from 'lucide-react';
 
 const VotingManagement = () => {
+  const toast = useToast();
   const [polls, setPolls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ question: '', option1: '', option2: '', closingDate: '', status: 'Active' });
 
-  const fetchPolls = async () => {
+  const fetchPolls = useCallback(async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const res = await api.get('/polls');
-      setPolls(res.data.data);
+      setPolls(res.data?.data || []);
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh polls');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [toast]);
 
-  useEffect(() => { fetchPolls(); }, []);
+  useEffect(() => { 
+    fetchPolls(); 
+  }, [fetchPolls]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -33,12 +47,12 @@ const VotingManagement = () => {
         status: formData.status
       };
       await api.post('/polls/admin', payload);
-      alert('Poll created successfully');
+      toast.success('Poll created successfully');
       setShowForm(false);
       setFormData({ question: '', option1: '', option2: '', closingDate: '', status: 'Active' });
-      fetchPolls();
+      fetchPolls(true);
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to create poll');
+      toast.error(err.response?.data?.error || 'Failed to create poll');
     }
   };
 
@@ -47,35 +61,50 @@ const VotingManagement = () => {
     if (!decision) return;
     try {
       await api.post(`/polls/admin/${id}/publish-result`, { decision });
-      fetchPolls();
+      toast.success('Poll result published successfully');
+      fetchPolls(true);
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to publish');
+      toast.error(err.response?.data?.error || 'Failed to publish poll result');
     }
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading polls...</div></div>;
+  if (loading && polls.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading polls...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Voting & Polls</h2>
           <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Create polls and publish results to the community</p>
         </div>
-        <button 
-          onClick={() => setShowForm(!showForm)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            backgroundColor: '#10b981', color: 'white', border: 'none',
-            padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
-            fontWeight: '600', transition: 'background 0.2s'
-          }}
-          onMouseOver={e => e.currentTarget.style.backgroundColor = '#059669'}
-          onMouseOut={e => e.currentTarget.style.backgroundColor = '#10b981'}
-        >
-          {showForm ? <Vote size={18} /> : <Plus size={18} />}
-          {showForm ? 'View Polls' : 'Create Poll'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <RefreshButton
+            onClick={() => fetchPolls(true)}
+            refreshing={refreshing}
+            loading={loading && polls.length === 0}
+            title="Refresh polls"
+          />
+          <button 
+            onClick={() => setShowForm(!showForm)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              backgroundColor: '#10b981', color: 'white', border: 'none',
+              padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
+              fontWeight: '600', transition: 'background 0.2s'
+            }}
+            onMouseOver={e => e.currentTarget.style.backgroundColor = '#059669'}
+            onMouseOut={e => e.currentTarget.style.backgroundColor = '#10b981'}
+          >
+            {showForm ? <Vote size={18} /> : <Plus size={18} />}
+            {showForm ? 'View Polls' : 'Create Poll'}
+          </button>
+        </div>
       </div>
 
       {showForm ? (

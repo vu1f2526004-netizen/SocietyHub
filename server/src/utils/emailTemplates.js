@@ -204,6 +204,54 @@ const residentMaintenanceBillCreated = ({ residentName, societyName, flatNumber,
 };
 
 /**
+ * C2. Resident: Pending Maintenance Bill Reminder
+ */
+const residentPendingBillReminder = ({ residentName, societyName, flatNumber, billId, month, amount, dueDate, paymentUrl, status = 'Pending' }) => {
+  const safeName = escapeHtml(residentName);
+  const safeSociety = escapeHtml(societyName);
+  const safeFlat = escapeHtml(flatNumber);
+  const safeMonth = escapeHtml(month);
+  const safeAmount = escapeHtml(Number(amount || 0).toLocaleString());
+  const safeDueDate = escapeHtml(dueDate ? new Date(dueDate).toLocaleDateString() : 'N/A');
+  const safeBillId = escapeHtml(billId);
+  const safeStatus = escapeHtml(status);
+  const isOverdue = status === 'Overdue' || (dueDate && new Date(dueDate) < new Date());
+
+  const title = isOverdue
+    ? `Overdue Payment Notice: ${safeMonth}`
+    : `Payment Reminder: ${safeMonth} Maintenance Bill`;
+  const preheader = `Friendly reminder: Maintenance bill of ₹${safeAmount} for ${safeMonth} is pending payment.`;
+
+  const bodyContentHtml = `
+    <p>Hello <strong>${safeName}</strong>,</p>
+    <p>This is a ${isOverdue ? '<strong style="color: #dc2626;">payment overdue notice</strong>' : 'friendly reminder'} regarding your maintenance bill for flat <strong>${safeFlat}</strong> at <strong>${safeSociety}</strong>.</p>
+    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+      <table style="width: 100%; font-size: 13px;">
+        <tr><td style="color: #64748b; padding: 4px 0;">Billing Period:</td><td style="font-weight: 600; text-align: right;">${safeMonth}</td></tr>
+        <tr><td style="color: #64748b; padding: 4px 0;">Bill Reference:</td><td style="font-weight: 600; text-align: right;">${safeBillId}</td></tr>
+        <tr><td style="color: #64748b; padding: 4px 0;">Outstanding Amount:</td><td style="font-weight: 700; color: #0f172a; font-size: 16px; text-align: right;">₹${safeAmount}</td></tr>
+        <tr><td style="color: #64748b; padding: 4px 0;">Due Date:</td><td style="font-weight: 600; color: ${isOverdue ? '#dc2626' : '#2563eb'}; text-align: right;">${safeDueDate}</td></tr>
+        <tr><td style="color: #64748b; padding: 4px 0;">Current Status:</td><td style="font-weight: 600; text-align: right;"><span style="background: ${isOverdue ? '#fee2e2' : '#fef3c7'}; color: ${isOverdue ? '#dc2626' : '#d97706'}; padding: 2px 8px; border-radius: 4px;">${safeStatus}</span></td></tr>
+      </table>
+    </div>
+    <p>Please log in to your SocietyHub resident portal to clear your dues online via our secure payment gateway.</p>
+  `;
+
+  const text = `Hello ${residentName},\n\nThis is a payment reminder for your maintenance bill for flat ${flatNumber} at ${societyName}.\n\nBilling Period: ${month}\nBill Reference: ${billId}\nOutstanding Amount: INR ${amount}\nDue Date: ${safeDueDate}\nStatus: ${status}\n\nPay online: ${paymentUrl}\n\nBest regards,\n${societyName} Finance Office`;
+
+  const html = renderEmailLayout({
+    title,
+    preheader,
+    bodyContentHtml,
+    ctaText: 'Pay Outstanding Bill Online',
+    ctaUrl: paymentUrl,
+    societyName
+  });
+
+  return { subject: `SocietyHub: Payment Reminder - ${month} (${societyName})`, text, html };
+};
+
+/**
  * D. Resident: Payment Confirmed (Receipt)
  */
 const residentPaymentConfirmed = ({ residentName, societyName, flatNumber, amount, receiptNumber, paymentId, month, paymentDate, portalUrl }) => {
@@ -637,6 +685,7 @@ module.exports = {
   residentRegistrationApproved,
   residentRegistrationRejected,
   residentMaintenanceBillCreated,
+  residentPendingBillReminder,
   residentPaymentConfirmed,
   residentPaymentFailed,
   residentComplaintStatusUpdated,

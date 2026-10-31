@@ -5,8 +5,12 @@ const errorHandler = (err, req, res, next) => {
 
   error.message = err.message;
 
-  // Log to console for dev
-  console.log(err);
+  // Log to console: full error in dev, concise log in production
+  if (process.env.NODE_ENV !== 'production') {
+    console.error(err);
+  } else {
+    console.error(`[ERROR] ${err.name || 'Error'}: ${err.message}`);
+  }
 
   // Mongoose bad ObjectId
   if (err.name === 'CastError') {
@@ -31,13 +35,20 @@ const errorHandler = (err, req, res, next) => {
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {
-    const message = Object.values(err.errors).map(val => val.message);
+    const message = Object.values(err.errors).map(val => val.message).join(', ');
     error = new ErrorResponse(message, 400);
   }
 
-  res.status(error.statusCode || 500).json({
+  const statusCode = error.statusCode || 500;
+  // In production, mask unexpected 500 internal errors to prevent information disclosure
+  let clientMessage = error.message;
+  if (statusCode === 500 && process.env.NODE_ENV === 'production' && !(err instanceof ErrorResponse)) {
+    clientMessage = 'An internal server error occurred. Please try again later.';
+  }
+
+  res.status(statusCode).json({
     success: false,
-    error: error.message || 'Server Error'
+    error: clientMessage || 'Server Error'
   });
 };
 

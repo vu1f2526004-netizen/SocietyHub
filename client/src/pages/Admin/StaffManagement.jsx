@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
+import ConfirmModal from '../../components/shared/ConfirmModal';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -16,18 +19,28 @@ import {
   Loader2,
   X,
   UserCheck,
-  UserX,
-  Copy,
-  Check
+  UserX
 } from 'lucide-react';
 
 const StaffManagement = () => {
+  const toast = useToast();
   const [staffList, setStaffList] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null, confirmLabel: 'Confirm', variant: 'danger' });
+
+  // Debounce search (300ms)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
 
   // Modals state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -52,35 +65,44 @@ const StaffManagement = () => {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [createdResult, setCreatedResult] = useState(null);
-  const [copied, setCopied] = useState(false);
 
   // Status toggle loading
   const [statusTogglingId, setStatusTogglingId] = useState(null);
 
-  const fetchStaff = async () => {
+  const fetchStaff = useCallback(async (isRefresh = false, searchOverride) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError('');
+      const activeSearch = searchOverride !== undefined ? searchOverride : debouncedSearch;
       const params = {};
       if (statusFilter !== 'All') params.status = statusFilter;
-      if (searchTerm.trim()) params.search = searchTerm.trim();
+      if (activeSearch && activeSearch.trim()) params.search = activeSearch.trim();
 
       const res = await api.get('/admin/staff', { params });
-      setStaffList(res.data.data || []);
+      setStaffList(res.data?.data || []);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to fetch staff members');
+      const msg = err.response?.data?.error || 'Failed to fetch staff members';
+      setError(msg);
+      if (isRefresh) {
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [statusFilter, debouncedSearch, toast]);
 
   useEffect(() => {
     fetchStaff();
-  }, [statusFilter]);
+  }, [fetchStaff]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
-    fetchStaff();
+    fetchStaff(false, searchTerm);
   };
 
   const handleOpenCreate = () => {
@@ -129,8 +151,7 @@ const StaffManagement = () => {
 
       setCreatedResult({
         user: res.data.data,
-        emailStatus: res.data.emailStatus,
-        setupPassword: res.data.data.temporarySetupPassword || (createForm.password ? '(As specified)' : null)
+        emailStatus: res.data.emailStatus
       });
       setSuccessMessage(`Security staff account for "${res.data.data.name}" created successfully!`);
       fetchStaff();
@@ -177,32 +198,36 @@ const StaffManagement = () => {
     }
   };
 
-  const handleToggleStatus = async (staff) => {
+  const handleToggleStatus = (staff) => {
     const nextStatus = staff.status === 'Active' ? 'Suspended' : 'Active';
     const actionName = nextStatus === 'Active' ? 'activate' : 'deactivate (suspend)';
 
-    if (!window.confirm(`Are you sure you want to ${actionName} account for ${staff.name}?`)) {
-      return;
-    }
-
-    try {
-      setStatusTogglingId(staff._id);
-      setSuccessMessage('');
-      setError('');
-      await api.patch(`/admin/staff/${staff._id}/status`, { status: nextStatus });
-      setSuccessMessage(`Account for ${staff.name} is now ${nextStatus}.`);
-      fetchStaff();
-    } catch (err) {
-      setError(err.response?.data?.error || `Failed to update status for ${staff.name}`);
-    } finally {
-      setStatusTogglingId(null);
-    }
-  };
-
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setConfirmModal({
+      isOpen: true,
+      title: `${nextStatus === 'Active' ? 'Activate' : 'Suspend'} Account`,
+      message: `Are you sure you want to ${actionName} the account for ${staff.name}?`,
+      confirmLabel: nextStatus === 'Active' ? 'Activate' : 'Suspend',
+      variant: nextStatus === 'Active' ? 'primary' : 'danger',
+      onConfirm: async () => {
+        try {
+          setStatusTogglingId(staff._id);
+          setSuccessMessage('');
+          setError('');
+          await api.patch(`/admin/staff/${staff._id}/status`, { status: nextStatus });
+          const msg = `Account for ${staff.name} is now ${nextStatus}.`;
+          setSuccessMessage(msg);
+          toast.success(msg);
+          fetchStaff();
+        } catch (err) {
+          const errMsg = err.response?.data?.error || `Failed to update status for ${staff.name}`;
+          setError(errMsg);
+          toast.error(errMsg);
+        } finally {
+          setStatusTogglingId(null);
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        }
+      }
+    });
   };
 
   const totalStaff = staffList.length;
@@ -222,26 +247,34 @@ const StaffManagement = () => {
             Manage security guards, gate staff, and duty personnel for your society
           </p>
         </div>
-        <button
-          onClick={handleOpenCreate}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            backgroundColor: '#10b981',
-            color: 'white',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '10px 18px',
-            fontSize: '0.9rem',
-            fontWeight: '600',
-            cursor: 'pointer',
-            boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)'
-          }}
-        >
-          <UserPlus size={18} />
-          Add Security Staff
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <RefreshButton
+            onClick={() => fetchStaff(true)}
+            refreshing={refreshing}
+            loading={loading && staffList.length === 0}
+            title="Refresh staff list"
+          />
+          <button
+            onClick={handleOpenCreate}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              backgroundColor: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 18px',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)'
+            }}
+          >
+            <UserPlus size={18} />
+            Add Security Staff
+          </button>
+        </div>
       </div>
 
       {/* Alert Messages */}
@@ -267,15 +300,15 @@ const StaffManagement = () => {
 
       {/* KPI Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-        <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
-          <div style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>Total Staff Members</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: '700', color: '#0f172a' }}>{totalStaff}</div>
+        <div style={{ backgroundColor: 'var(--sh-white)', padding: '20px', borderRadius: '12px', border: '1px solid var(--sh-slate-200)', boxShadow: 'var(--sh-shadow-xs)' }}>
+          <div style={{ color: 'var(--sh-slate-500)', fontSize: '0.85rem', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>Total Staff Members</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: '700', color: 'var(--sh-slate-900)' }}>{totalStaff}</div>
         </div>
-        <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+        <div style={{ backgroundColor: 'var(--sh-white)', padding: '20px', borderRadius: '12px', border: '1px solid var(--sh-slate-200)', boxShadow: 'var(--sh-shadow-xs)' }}>
           <div style={{ color: '#059669', fontSize: '0.85rem', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>Active On Duty</div>
           <div style={{ fontSize: '1.8rem', fontWeight: '700', color: '#059669' }}>{activeStaff}</div>
         </div>
-        <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+        <div style={{ backgroundColor: 'var(--sh-white)', padding: '20px', borderRadius: '12px', border: '1px solid var(--sh-slate-200)', boxShadow: 'var(--sh-shadow-xs)' }}>
           <div style={{ color: '#d97706', fontSize: '0.85rem', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>Suspended / Inactive</div>
           <div style={{ fontSize: '1.8rem', fontWeight: '700', color: '#d97706' }}>{suspendedStaff}</div>
         </div>
@@ -284,21 +317,22 @@ const StaffManagement = () => {
       {/* Filter and Search Bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
         {/* Status Filter Tabs */}
-        <div style={{ display: 'flex', gap: '8px', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', backgroundColor: 'var(--sh-slate-100)', padding: '4px', borderRadius: '8px', border: '1px solid var(--sh-slate-200)' }}>
           {['All', 'Active', 'Suspended'].map((status) => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}
               style={{
-                border: 'none',
+                border: statusFilter === status ? '1px solid var(--sh-slate-300)' : 'none',
                 padding: '6px 14px',
                 borderRadius: '6px',
                 fontSize: '0.85rem',
                 fontWeight: '600',
                 cursor: 'pointer',
-                backgroundColor: statusFilter === status ? 'white' : 'transparent',
-                color: statusFilter === status ? '#0f172a' : '#64748b',
-                boxShadow: statusFilter === status ? '0 1px 2px rgba(0,0,0,0.05)' : 'none'
+                backgroundColor: statusFilter === status ? 'var(--sh-white)' : 'transparent',
+                color: statusFilter === status ? 'var(--sh-slate-900)' : 'var(--sh-slate-500)',
+                boxShadow: statusFilter === status ? 'var(--sh-shadow-xs)' : 'none',
+                transition: 'all 0.15s ease'
               }}
             >
               {status === 'All' ? 'All Staff' : status}
@@ -309,7 +343,7 @@ const StaffManagement = () => {
         {/* Search */}
         <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '8px', maxWidth: '360px', width: '100%' }}>
           <div style={{ position: 'relative', flex: 1 }}>
-            <Search size={16} color="#94a3b8" style={{ position: 'absolute', top: '10px', left: '12px' }} />
+            <Search size={16} color="var(--sh-slate-400)" style={{ position: 'absolute', top: '10px', left: '12px' }} />
             <input
               type="text"
               placeholder="Search by name, email, or mobile..."
@@ -317,13 +351,41 @@ const StaffManagement = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{
                 width: '100%',
-                padding: '8px 10px 8px 36px',
+                padding: '9px 32px 9px 36px',
                 borderRadius: '8px',
-                border: '1px solid #cbd5e1',
-                fontSize: '0.875rem',
-                boxSizing: 'border-box'
+                border: '1px solid var(--sh-slate-300)',
+                backgroundColor: 'var(--sh-white)',
+                color: 'var(--sh-slate-900)',
+                fontSize: '0.85rem',
+                outline: 'none',
+                boxSizing: 'border-box',
+                boxShadow: 'var(--sh-shadow-xs)'
               }}
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  fetchStaff(false, '');
+                }}
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  right: '8px',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: '#94a3b8',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+                title="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
           <button
             type="submit"
@@ -344,16 +406,16 @@ const StaffManagement = () => {
       </div>
 
       {/* Staff Table */}
-      <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+      <div style={{ backgroundColor: 'var(--sh-white)', borderRadius: '12px', border: '1px solid var(--sh-slate-200)', boxShadow: 'var(--sh-shadow-xs)', overflow: 'hidden' }}>
         {loading ? (
-          <div style={{ padding: '60px', textAlign: 'center', color: '#64748b' }}>
+          <div style={{ padding: '60px', textAlign: 'center', color: 'var(--sh-slate-500)' }}>
             <Loader2 size={32} className="spin" style={{ margin: '0 auto 12px auto' }} />
             <div>Loading staff accounts...</div>
           </div>
         ) : staffList.length === 0 ? (
-          <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
-            <ShieldAlert size={48} color="#94a3b8" style={{ margin: '0 auto 16px auto' }} />
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#334155', margin: '0 0 6px 0' }}>No staff members found</h3>
+          <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--sh-slate-500)' }}>
+            <ShieldAlert size={48} color="var(--sh-slate-400)" style={{ margin: '0 auto 16px auto' }} />
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--sh-slate-800)', margin: '0 0 6px 0' }}>No staff members found</h3>
             <p style={{ margin: 0, fontSize: '0.875rem' }}>
               {searchTerm ? 'No results matched your search criteria.' : 'Click "Add Security Staff" above to create an account for security personnel.'}
             </p>
@@ -361,27 +423,27 @@ const StaffManagement = () => {
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              <thead style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+              <thead style={{ backgroundColor: 'var(--sh-slate-100)', borderBottom: '1px solid var(--sh-slate-200)' }}>
                 <tr>
-                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Staff Member</th>
-                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Contact</th>
-                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Role</th>
-                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Status</th>
-                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Registered</th>
-                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: '#64748b', textAlign: 'right' }}>Actions</th>
+                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Staff Member</th>
+                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Contact</th>
+                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Role</th>
+                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Status</th>
+                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Registered</th>
+                  <th style={{ padding: '14px 20px', fontSize: '0.85rem', fontWeight: '600', color: 'var(--sh-slate-500)', textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {staffList.map((staff) => (
-                  <tr key={staff._id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <tr key={staff._id} style={{ borderBottom: '1px solid var(--sh-slate-200)' }}>
                     <td style={{ padding: '16px 20px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <div style={{
                           width: '38px',
                           height: '38px',
                           borderRadius: '50%',
-                          backgroundColor: staff.status === 'Active' ? '#e0f2fe' : '#f1f5f9',
-                          color: staff.status === 'Active' ? '#0369a1' : '#64748b',
+                          backgroundColor: staff.status === 'Active' ? 'var(--sh-badge-info-bg)' : 'var(--sh-slate-100)',
+                          color: staff.status === 'Active' ? 'var(--sh-badge-info-text)' : 'var(--sh-slate-500)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -391,8 +453,8 @@ const StaffManagement = () => {
                           {staff.name?.charAt(0).toUpperCase()}
                         </div>
                         <div>
-                          <div style={{ fontWeight: '600', color: '#0f172a', fontSize: '0.9rem' }}>{staff.name}</div>
-                          <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <div style={{ fontWeight: '600', color: 'var(--sh-slate-900)', fontSize: '0.9rem' }}>{staff.name}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--sh-slate-500)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                             <Mail size={12} /> {staff.email}
                           </div>
                         </div>
@@ -400,11 +462,11 @@ const StaffManagement = () => {
                     </td>
                     <td style={{ padding: '16px 20px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#334155', fontSize: '0.85rem' }}>
-                          <Phone size={13} color="#64748b" /> {staff.mobile || 'N/A'}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--sh-slate-700)', fontSize: '0.85rem' }}>
+                          <Phone size={13} color="var(--sh-slate-400)" /> {staff.mobile || 'N/A'}
                         </div>
                         {staff.phone && (
-                          <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--sh-slate-400)' }}>
                             Alt: {staff.phone}
                           </div>
                         )}
@@ -419,9 +481,9 @@ const StaffManagement = () => {
                         borderRadius: '20px',
                         fontSize: '0.75rem',
                         fontWeight: '600',
-                        backgroundColor: '#f0fdf4',
-                        color: '#15803d',
-                        border: '1px solid #bbf7d0'
+                        backgroundColor: 'var(--sh-badge-success-bg)',
+                        color: 'var(--sh-badge-success-text)',
+                        border: '1px solid var(--sh-badge-success-border)'
                       }}>
                         <ShieldCheck size={12} /> SecurityStaff
                       </span>
@@ -435,15 +497,15 @@ const StaffManagement = () => {
                         borderRadius: '20px',
                         fontSize: '0.75rem',
                         fontWeight: '600',
-                        backgroundColor: staff.status === 'Active' ? '#ecfdf5' : '#fffbeb',
-                        color: staff.status === 'Active' ? '#047857' : '#b45309',
-                        border: staff.status === 'Active' ? '1px solid #a7f3d0' : '1px solid #fde68a'
+                        backgroundColor: staff.status === 'Active' ? 'var(--sh-badge-success-bg)' : 'var(--sh-badge-warning-bg)',
+                        color: staff.status === 'Active' ? 'var(--sh-badge-success-text)' : 'var(--sh-badge-warning-text)',
+                        border: staff.status === 'Active' ? '1px solid var(--sh-badge-success-border)' : '1px solid var(--sh-badge-warning-border)'
                       }}>
                         {staff.status === 'Active' ? <UserCheck size={12} /> : <UserX size={12} />}
                         {staff.status}
                       </span>
                     </td>
-                    <td style={{ padding: '16px 20px', color: '#64748b', fontSize: '0.85rem' }}>
+                    <td style={{ padding: '16px 20px', color: 'var(--sh-slate-500)', fontSize: '0.85rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <Calendar size={13} />
                         {staff.createdAt ? new Date(staff.createdAt).toLocaleDateString() : 'N/A'}
@@ -459,11 +521,11 @@ const StaffManagement = () => {
                           title="View Details"
                           style={{
                             padding: '6px',
-                            background: '#f8fafc',
-                            border: '1px solid #e2e8f0',
+                            background: 'var(--sh-slate-100)',
+                            border: '1px solid var(--sh-slate-200)',
                             borderRadius: '6px',
                             cursor: 'pointer',
-                            color: '#475569'
+                            color: 'var(--sh-slate-600)'
                           }}
                         >
                           <Eye size={15} />
@@ -473,11 +535,11 @@ const StaffManagement = () => {
                           title="Edit Details"
                           style={{
                             padding: '6px',
-                            background: '#f8fafc',
-                            border: '1px solid #e2e8f0',
+                            background: 'var(--sh-slate-100)',
+                            border: '1px solid var(--sh-slate-200)',
                             borderRadius: '6px',
                             cursor: 'pointer',
-                            color: '#2563eb'
+                            color: 'var(--sh-blue-500)'
                           }}
                         >
                           <Edit2 size={15} />
@@ -549,7 +611,10 @@ const StaffManagement = () => {
                 </div>
               </div>
               <button
-                onClick={() => setIsCreateOpen(false)}
+                onClick={() => {
+                  setIsCreateOpen(false);
+                  setCreatedResult(null);
+                }}
                 style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
               >
                 <X size={20} />
@@ -569,33 +634,6 @@ const StaffManagement = () => {
                     <div><strong>Role:</strong> {createdResult.user.role}</div>
                     <div><strong>Status:</strong> {createdResult.user.status}</div>
                   </div>
-
-                  {createdResult.setupPassword && (
-                    <div style={{ marginTop: '14px', backgroundColor: 'white', padding: '12px', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
-                      <div style={{ fontSize: '0.78rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600', marginBottom: '4px' }}>Initial Login Password</div>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <code style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a' }}>{createdResult.setupPassword}</code>
-                        <button
-                          onClick={() => copyToClipboard(createdResult.setupPassword)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            background: '#f1f5f9',
-                            border: 'none',
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '0.75rem',
-                            fontWeight: '600'
-                          }}
-                        >
-                          {copied ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
-                          {copied ? 'Copied' : 'Copy'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
 
                   <div style={{ marginTop: '12px', fontSize: '0.8rem', color: '#64748b' }}>
                     {createdResult.emailStatus?.sent ? (
@@ -722,7 +760,7 @@ const StaffManagement = () => {
                 <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px', marginBottom: '20px', fontSize: '0.8rem', color: '#64748b', display: 'flex', gap: '8px' }}>
                   <Lock size={16} color="#94a3b8" style={{ flexShrink: 0, marginTop: '2px' }} />
                   <div>
-                    Password will be hashed securely with bcrypt. If left blank, a cryptographically random temporary password is created and shown on the next step.
+                    Password will be hashed securely with bcrypt. If left blank, a cryptographically random temporary password is created and sent to the staff member via activation email.
                   </div>
                 </div>
 
@@ -991,6 +1029,16 @@ const StaffManagement = () => {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmLabel={confirmModal.confirmLabel || 'Confirm'}
+        variant={confirmModal.variant || 'danger'}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };

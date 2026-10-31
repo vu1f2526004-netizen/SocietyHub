@@ -220,6 +220,76 @@ const notifyResidentBillCreated = async ({ billId, societyId }) => {
 };
 
 /**
+ * 1C2. Resident Maintenance Bill Payment Reminder
+ * Dispatches in-app notification and email reminder for an unpaid maintenance bill.
+ * Accurately tracks SMTP acceptance vs delivery.
+ */
+const notifyResidentBillReminder = async ({ billId, societyId }) => {
+  try {
+    const bill = await MaintenanceBill.findOne({ _id: billId, societyId });
+    if (!bill) {
+      return { success: false, reason: 'BILL_NOT_FOUND' };
+    }
+
+    if (bill.status === 'Paid' || bill.status === 'Cancelled') {
+      return { success: false, reason: 'BILL_NOT_ELIGIBLE', status: bill.status };
+    }
+
+    const resident = await User.findOne({ _id: bill.residentId, societyId });
+    if (!resident) {
+      return { success: false, reason: 'RESIDENT_NOT_FOUND' };
+    }
+
+    const society = await Society.findById(societyId);
+    const societyName = society ? society.name : 'Your Society';
+    const clientUrl = getClientBaseUrl();
+    const paymentUrl = `${clientUrl}/resident/bills`;
+
+    // 1. In-app notification
+    const inAppResult = await safeCreateInAppNotification({
+      userId: resident._id,
+      societyId,
+      title: 'Payment Reminder: Maintenance Bill',
+      message: `Reminder: Maintenance bill of ₹${bill.amount} for ${bill.month} is pending payment. Due date: ${new Date(bill.dueDate).toLocaleDateString()}. Please clear your dues online.`,
+      type: 'Warning',
+      link: '/resident/bills'
+    });
+
+    // 2. Transactional email
+    let emailResult = { sent: false, reason: 'NO_EMAIL' };
+    if (resident.email) {
+      const emailData = templates.residentPendingBillReminder({
+        residentName: resident.name,
+        societyName,
+        flatNumber: bill.flatNumber || resident.flatNumber || 'N/A',
+        billId: bill._id.toString(),
+        month: bill.month,
+        amount: bill.amount,
+        dueDate: bill.dueDate,
+        paymentUrl,
+        status: bill.status
+      });
+
+      emailResult = await sendEmail({
+        to: resident.email,
+        subject: emailData.subject,
+        text: emailData.text,
+        html: emailData.html
+      });
+    }
+
+    return {
+      success: true,
+      inAppNotification: !!inAppResult,
+      email: emailResult
+    };
+  } catch (err) {
+    console.error(`[NOTIFICATION ERROR] notifyResidentBillReminder: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+};
+
+/**
  * 1D & 2B. Payment Confirmation (Resident Receipt + Admin Ledger Alert)
  * Durable deduplication ensures webhook retries or repeat calls never send duplicate receipts.
  */
@@ -629,6 +699,7 @@ module.exports = {
   notifyResidentRegistrationRejected,
   notifyAdminNewResidentRegistration,
   notifyResidentBillCreated,
+  notifyResidentBillReminder,
   notifyPaymentConfirmed,
   notifyPaymentFailed,
   notifyComplaintStatusUpdated,

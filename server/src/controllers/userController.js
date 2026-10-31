@@ -6,11 +6,27 @@ const User = require('../models/User');
 // @access    Private/Admin
 exports.getUsers = async (req, res, next) => {
   try {
-    const filter = { societyId: req.user.societyId };
-    if (req.query.role) {
-      filter.role = req.query.role;
+    const andConditions = [{ societyId: req.user.societyId }];
+    if (req.query.role && req.query.role !== 'All') {
+      andConditions.push({ role: req.query.role });
     }
-    const users = await User.find(filter).select('-password');
+    if (req.query.status && req.query.status !== 'All') {
+      andConditions.push({ status: req.query.status });
+    }
+    if (req.query.search && req.query.search.trim()) {
+      const sRegex = new RegExp(req.query.search.trim(), 'i');
+      andConditions.push({
+        $or: [
+          { name: sRegex },
+          { email: sRegex },
+          { flatNumber: sRegex },
+          { mobile: sRegex },
+          { phone: sRegex }
+        ]
+      });
+    }
+    const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+    const users = await User.find(filter).select('-password').sort({ createdAt: -1 });
     res.status(200).json({
       success: true,
       count: users.length,
@@ -26,13 +42,28 @@ exports.getUsers = async (req, res, next) => {
 // @access    Private/Admin
 exports.getResidents = async (req, res, next) => {
   try {
-    const filter = {
-      societyId: req.user.societyId,
-      role: 'Resident'
-    };
-    if (req.query.status) {
-      filter.status = req.query.status;
+    const andConditions = [
+      {
+        societyId: req.user.societyId,
+        role: 'Resident'
+      }
+    ];
+    if (req.query.status && req.query.status !== 'All') {
+      andConditions.push({ status: req.query.status });
     }
+    if (req.query.search && req.query.search.trim()) {
+      const sRegex = new RegExp(req.query.search.trim(), 'i');
+      andConditions.push({
+        $or: [
+          { name: sRegex },
+          { email: sRegex },
+          { flatNumber: sRegex },
+          { mobile: sRegex },
+          { phone: sRegex }
+        ]
+      });
+    }
+    const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
     const residents = await User.find(filter).select('-password').sort({ createdAt: -1 });
     res.status(200).json({
       success: true,
@@ -69,14 +100,14 @@ exports.getMe = async (req, res, next) => {
 exports.createUser = async (req, res, next) => {
   try {
     // Only admins can create users, handled by requireRoles middleware in routes
-    const { name, email, password, role, flatNumber, mobile, phone } = req.body;
+    const { name, email, password, role, flatNumber, mobile, phone, financialEffectiveDate } = req.body;
     
     // Ensure role is valid
     if (!['Resident', 'Admin', 'SecurityStaff'].includes(role)) {
        return next(new ErrorResponse('Invalid role', 400));
     }
 
-    const user = await User.create({
+    const userData = {
       name,
       email,
       password,
@@ -85,7 +116,15 @@ exports.createUser = async (req, res, next) => {
       mobile,
       phone,
       societyId: req.user.societyId // Strictly associate with admin's society
-    });
+    };
+
+    if (role === 'Resident') {
+      userData.financialEffectiveDate = financialEffectiveDate ? new Date(financialEffectiveDate) : new Date();
+      userData.membershipStartDate = new Date();
+      userData.approvedAt = new Date();
+    }
+
+    const user = await User.create(userData);
 
     const userObj = user.toObject();
     delete userObj.password;

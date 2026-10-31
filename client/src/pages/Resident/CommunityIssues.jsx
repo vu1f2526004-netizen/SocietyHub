@@ -1,44 +1,66 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import RefreshButton from '../../components/shared/RefreshButton';
 import FileUpload from '../../components/shared/FileUpload';
 import { AlertTriangle, MapPin, Camera, Shield, Eye, Info, Car } from 'lucide-react';
 
 const CommunityIssues = () => {
+  const toast = useToast();
   const [issues, setIssues] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({ title: '', issueType: '', description: '', location: '', vehicleNumber: '' });
   const [file, setFile] = useState(null);
 
-  const fetchIssues = async () => {
+  const fetchIssues = useCallback(async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const res = await api.get('/issues');
-      setIssues(res.data.data);
+      setIssues(res.data?.data || []);
+      if (isRefresh) {
+        toast.success('Issues feed updated');
+      }
     } catch (err) {
       console.error(err);
+      if (isRefresh) {
+        toast.error('Failed to refresh community issues');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [toast]);
 
-  useEffect(() => { fetchIssues(); }, []);
+  useEffect(() => {
+    fetchIssues();
+  }, [fetchIssues]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     try {
+      setSubmitting(true);
       const data = new FormData();
       Object.keys(formData).forEach(key => data.append(key, formData[key]));
       if (file) data.append('photo', file);
       
       await api.post('/issues', data);
-      alert('Issue reported successfully. It will be public after Admin approval.');
+      toast.success('Issue reported successfully. It will be public after Admin approval.');
       setShowForm(false);
       setFormData({ title: '', issueType: '', description: '', location: '', vehicleNumber: '' });
       setFile(null);
       fetchIssues();
     } catch (err) {
-      alert(err.response?.data?.error || 'Error submitting issue');
+      toast.error(err.response?.data?.error || 'Error submitting issue');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -52,29 +74,38 @@ const CommunityIssues = () => {
     }
   };
 
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><div className="loader">Loading issues...</div></div>;
+  if (loading && issues.length === 0) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+        <div className="loader">Loading issues...</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>Community Issues</h2>
           <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>View and report common society problems</p>
         </div>
-        <button 
-          onClick={() => setShowForm(!showForm)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            backgroundColor: '#f59e0b', color: 'white', border: 'none',
-            padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
-            fontWeight: '600', transition: 'background 0.2s'
-          }}
-          onMouseOver={e => e.currentTarget.style.backgroundColor = '#d97706'}
-          onMouseOut={e => e.currentTarget.style.backgroundColor = '#f59e0b'}
-        >
-          <AlertTriangle size={18} />
-          {showForm ? 'View Feed' : 'Report Issue'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <RefreshButton onRefresh={() => fetchIssues(true)} loading={refreshing} title="Refresh community issues" />
+          <button 
+            onClick={() => setShowForm(!showForm)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              backgroundColor: '#f59e0b', color: 'white', border: 'none',
+              padding: '10px 16px', borderRadius: '8px', cursor: 'pointer',
+              fontWeight: '600', transition: 'background 0.2s'
+            }}
+            onMouseOver={e => e.currentTarget.style.backgroundColor = '#d97706'}
+            onMouseOut={e => e.currentTarget.style.backgroundColor = '#f59e0b'}
+          >
+            <AlertTriangle size={18} />
+            {showForm ? 'View Feed' : 'Report Issue'}
+          </button>
+        </div>
       </div>
 
       {showForm ? (

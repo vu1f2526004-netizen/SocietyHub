@@ -1,11 +1,64 @@
 import axios from 'axios';
 
+export const getActiveRoleFromPath = () => {
+  if (typeof window === 'undefined') return null;
+  const path = window.location.pathname;
+  if (path.startsWith('/admin')) return 'Admin';
+  if (path.startsWith('/resident')) return 'Resident';
+  if (path.startsWith('/staff')) return 'SecurityStaff';
+  return null;
+};
+
+export const getAuthToken = () => {
+  if (typeof window === 'undefined') return null;
+  
+  // 1. URL parameter auth_token (useful for headless testing/scripts)
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const queryToken = params.get('auth_token');
+    if (queryToken) return queryToken;
+  } catch (_) {}
+
+  // 2. Tab-isolated session storage (primary for concurrent multi-tab sessions)
+  try {
+    const sessionToken = sessionStorage.getItem('token');
+    if (sessionToken) return sessionToken;
+  } catch (_) {}
+
+  // 3. Role-scoped localStorage based on portal pathname
+  try {
+    const activeRole = getActiveRoleFromPath();
+    if (activeRole) {
+      const roleToken = localStorage.getItem(`token_${activeRole}`);
+      if (roleToken) return roleToken;
+    }
+  } catch (_) {}
+
+  // 4. Fallback to generic localStorage token
+  try {
+    return localStorage.getItem('token');
+  } catch (_) {
+    return null;
+  }
+};
+
+export const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  // In production, fallback to same-origin /api to avoid sending requests to localhost:5000
+  if (import.meta.env.PROD) {
+    return '/api';
+  }
+  return 'http://localhost:5000/api';
+};
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000/api',
+  baseURL: getApiBaseUrl(),
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = getAuthToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -16,11 +69,30 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      const requestUrl = error.config?.url || '';
+      const isLoginRequest = requestUrl.includes('/auth/login');
+      
+      // Never intercept or trigger page redirects on /auth/login failures
+      if (!isLoginRequest && typeof window !== 'undefined') {
+        try {
+          sessionStorage.removeItem('token');
+          sessionStorage.removeItem('user_role');
+          const activeRole = getActiveRoleFromPath();
+          if (activeRole) {
+            localStorage.removeItem(`token_${activeRole}`);
+          }
+        } catch (_) {}
+
+        const path = window.location.pathname;
+        const isProtectedRoute = path.startsWith('/admin') || path.startsWith('/resident') || path.startsWith('/staff');
+        if (isProtectedRoute && path !== '/login') {
+          window.location.href = '/login';
+        }
+      }
     }
     return Promise.reject(error);
   }
 );
 
 export default api;
+

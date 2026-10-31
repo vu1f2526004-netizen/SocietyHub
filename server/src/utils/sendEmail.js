@@ -104,9 +104,10 @@ const validateEmailParams = ({ to, subject, text, html }) => {
  * @param {string} options.subject - Email subject line
  * @param {string} [options.text] - Plain text body
  * @param {string} [options.html] - HTML formatted body
+ * @param {string} [options.replyTo] - Optional Reply-To address
  * @returns {Promise<{ sent: boolean, reason?: string, messageId?: string, error?: string, acceptedBySmtp?: boolean }>}
  */
-const sendEmail = async ({ to, subject, text, html }) => {
+const sendEmail = async ({ to, subject, text, html, replyTo }) => {
   // 1. Parameter Validation
   const validationError = validateEmailParams({ to, subject, text, html });
   if (validationError) {
@@ -142,18 +143,28 @@ const sendEmail = async ({ to, subject, text, html }) => {
       };
     }
 
-    const fromEmail = process.env.FROM_EMAIL || process.env.SMTP_USER || process.env.MAIL_USER || 'no-reply@societyhub.internal';
+    const rawFromEmail = process.env.FROM_EMAIL;
+    const isPlaceholderFrom = !rawFromEmail || rawFromEmail.includes('YOUR_') || rawFromEmail.includes('placeholder') || !rawFromEmail.includes('@');
+    const fromEmail = isPlaceholderFrom
+      ? (process.env.MAIL_USER || process.env.SMTP_USER || 'no-reply@societyhub.internal')
+      : rawFromEmail.trim();
     const fromName = process.env.FROM_NAME || 'SocietyHub';
     const from = `"${fromName}" <${fromEmail}>`;
 
     // 4. Dispatch Email to SMTP Server
-    const info = await transporter.sendMail({
+    const mailOptions = {
       from,
       to: normalizedTo,
       subject: subject.trim(),
       text: text ? text.trim() : undefined,
       html: html ? html.trim() : undefined
-    });
+    };
+
+    if (replyTo && typeof replyTo === 'string' && replyTo.trim()) {
+      mailOptions.replyTo = replyTo.trim().toLowerCase();
+    }
+
+    const info = await transporter.sendMail(mailOptions);
 
     // Note: Accurately record SMTP acceptance (relay handoff), not inbox delivery.
     console.log(`[SMTP ACCEPTED] Email accepted by SMTP relay for ${normalizedTo} (MessageId: ${info.messageId})`);

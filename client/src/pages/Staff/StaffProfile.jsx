@@ -1,10 +1,12 @@
 import React, { useContext, useState } from 'react';
 import api from '../../services/api';
 import { AuthContext } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import { User, Mail, Shield, Smartphone, Save } from 'lucide-react';
 
 const StaffProfile = () => {
   const { user, setUser } = useContext(AuthContext);
+  const toast = useToast();
   const [formData, setFormData] = useState({ name: user.name, email: user.email, mobile: user.mobile || '' });
   const [loading, setLoading] = useState(false);
 
@@ -14,9 +16,9 @@ const StaffProfile = () => {
       setLoading(true);
       const res = await api.put('/users/me', formData);
       setUser(res.data.data);
-      alert('Profile updated successfully');
+      toast.success('Profile updated successfully');
     } catch (err) {
-      alert('Failed to update profile');
+      toast.error('Failed to update profile');
     } finally {
       setLoading(false);
     }

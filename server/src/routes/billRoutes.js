@@ -8,7 +8,10 @@ const {
   updateBill,
   deleteBill,
   previewBulkMonthlyBills,
-  generateBulkMonthlyBills
+  generateBulkMonthlyBills,
+  sendBillReminder,
+  sendBulkBillReminders,
+  transferArrears
 } = require('../controllers/billController');
 
 const router = express.Router();
@@ -16,6 +19,9 @@ router.use(verifyToken);
 
 router.post('/admin/bulk-preview', requireRoles('Admin'), previewBulkMonthlyBills);
 router.post('/admin/bulk-generate', requireRoles('Admin'), generateBulkMonthlyBills);
+router.post('/admin/bulk-reminders', requireRoles('Admin'), sendBulkBillReminders);
+router.post('/admin/transfer-arrears', requireRoles('Admin'), transferArrears);
+router.post('/admin/:id/reminder', requireRoles('Admin'), sendBillReminder);
 router.post('/admin', requireRoles('Admin'), createBill);
 router.get('/my', requireRoles('Resident'), getMyBills);
 router.get('/admin', requireRoles('Admin'), getAdminBills);

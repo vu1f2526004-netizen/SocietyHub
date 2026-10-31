@@ -2,6 +2,8 @@ import React, { useContext, useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import NotificationDropdown from '../components/NotificationDropdown';
+import ErrorBoundary from '../components/shared/ErrorBoundary';
+import ThemeToggle from '../components/shared/ThemeToggle';
 import { 
   ShieldAlert, 
   LayoutDashboard, 
@@ -13,7 +15,9 @@ import {
   User, 
   LogOut, 
   Menu, 
-  X 
+  X,
+  Building2,
+  ChevronRight
 } from 'lucide-react';
 
 const StaffLayout = () => {
@@ -46,144 +50,295 @@ const StaffLayout = () => {
   };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div style={{ 
+      display: 'flex', 
+      minHeight: '100vh', 
+      backgroundColor: 'var(--sh-slate-50)', 
+      color: 'var(--sh-slate-900)',
+      fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+      transition: 'background-color 0.2s ease, color 0.2s ease'
+    }}>
+      {/* Mobile backdrop */}
+      {sidebarOpen && (
+        <div 
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(5, 11, 27, 0.6)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 45
+          }}
+          className="lg-hidden"
+        />
+      )}
+
       {/* Sidebar */}
-      <div 
+      <aside 
         style={{
-          width: sidebarOpen ? '280px' : '0',
-          transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+          width: '272px',
+          height: '100vh',
           position: 'fixed',
-          zIndex: 40,
-          height: '100%',
-          backgroundColor: '#0f172a',
-          color: 'white',
-          transition: 'transform 0.3s ease-in-out, width 0.3s ease-in-out',
+          top: 0,
+          left: 0,
+          zIndex: 50,
+          backgroundColor: '#070D1D',
+          color: '#F8FAFC',
           display: 'flex',
           flexDirection: 'column',
-          boxShadow: '4px 0 10px rgba(0,0,0,0.1)'
-        }}
-        className="staff-sidebar"
+          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+          boxShadow: '4px 0 24px rgba(0, 0, 0, 0.25)',
+          transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+          transition: 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
+        }} 
+        className="portal-sidebar"
       >
-        <div style={{ padding: '24px 20px', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Brand header */}
+        <div style={{ 
+          padding: '22px 20px', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'space-between', 
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)' 
+        }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+            <div style={{ 
+              width: '38px', 
+              height: '38px', 
+              background: 'linear-gradient(135deg, #2563EB, #1D4ED8)', 
+              borderRadius: '10px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              color: '#FFFFFF', 
+              boxShadow: '0 4px 12px rgba(37, 99, 235, 0.35)'
+            }}>
               <ShieldAlert size={22} />
             </div>
             <div>
-              <h1 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '700', letterSpacing: '0.02em', color: 'white' }}>SocietyHub</h1>
-              <span style={{ fontSize: '0.72rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Security / Staff</span>
+              <div style={{ fontSize: '1.15rem', fontWeight: '800', letterSpacing: '-0.02em', color: '#FFFFFF', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                SocietyHub
+                <span style={{ 
+                  fontSize: '0.62rem', 
+                  fontWeight: '700', 
+                  padding: '2px 6px', 
+                  borderRadius: '4px', 
+                  backgroundColor: 'rgba(37, 99, 235, 0.2)', 
+                  color: '#60A5FA',
+                  border: '1px solid rgba(37, 99, 235, 0.35)',
+                  letterSpacing: '0.04em'
+                }}>
+                  SECURITY
+                </span>
+              </div>
+              <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '1px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <Building2 size={11} style={{ color: '#60A5FA' }} />
+                <span>Main Gate Terminal</span>
+              </div>
             </div>
           </div>
           <button 
-            className="staff-mobile-close" 
+            className="lg-hidden" 
             onClick={() => setSidebarOpen(false)} 
-            style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+            style={{ 
+              background: 'rgba(255, 255, 255, 0.06)', 
+              border: 'none', 
+              color: '#94A3B8', 
+              cursor: 'pointer',
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
           >
-            <X size={22} />
+            <X size={18} />
           </button>
         </div>
         
-        <div style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: '6px', overflowY: 'auto' }}>
+        {/* Navigation items */}
+        <div style={{ 
+          flex: 1, 
+          overflowY: 'auto', 
+          padding: '16px 12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '3px'
+        }}>
           {navItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
               end={item.path === '/staff'}
-              onClick={() => setSidebarOpen(false)}
               style={({ isActive }) => ({
                 display: 'flex',
                 alignItems: 'center',
-                gap: '12px',
-                padding: '12px 16px',
+                padding: '11px 14px',
                 borderRadius: '8px',
+                color: isActive ? '#FFFFFF' : '#94A3B8',
                 textDecoration: 'none',
-                backgroundColor: isActive ? '#1e293b' : 'transparent',
-                color: isActive ? '#60a5fa' : '#cbd5e1',
-                fontWeight: isActive ? '600' : '500',
-                borderLeft: isActive ? '3px solid #3b82f6' : '3px solid transparent',
-                transition: 'all 0.15s ease'
+                background: isActive 
+                  ? 'linear-gradient(90deg, rgba(37, 99, 235, 0.22) 0%, rgba(37, 99, 235, 0.05) 100%)' 
+                  : 'transparent',
+                borderLeft: isActive ? '3px solid #3B82F6' : '3px solid transparent',
+                transition: 'all 0.18s ease',
+                gap: '12px',
+                fontWeight: isActive ? '600' : '400',
+                fontSize: '0.88rem'
               })}
+              onClick={() => setSidebarOpen(false)}
             >
-              <item.icon size={20} />
-              <span>{item.label}</span>
+              {({ isActive }) => (
+                <>
+                  <item.icon size={18} color={isActive ? '#60A5FA' : '#64748B'} style={{ flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>{item.label}</span>
+                  {isActive && <ChevronRight size={14} color="#60A5FA" style={{ opacity: 0.8 }} />}
+                </>
+              )}
             </NavLink>
           ))}
         </div>
 
-        <div style={{ padding: '20px 16px', borderTop: '1px solid #1e293b' }}>
-          <button 
+        {/* User bar / Logout */}
+        <div style={{ 
+          padding: '16px', 
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+          backgroundColor: 'rgba(0, 0, 0, 0.2)'
+        }}>
+          <button
             onClick={handleLogout}
-            style={{ 
-              width: '100%', 
+            style={{
               display: 'flex', 
               alignItems: 'center', 
-              gap: '12px', 
-              padding: '12px 16px', 
-              backgroundColor: 'transparent', 
-              color: '#ef4444', 
-              border: 'none', 
-              borderRadius: '8px', 
-              cursor: 'pointer', 
+              gap: '10px', 
+              width: '100%', 
+              padding: '10px 14px',
+              backgroundColor: 'rgba(239, 68, 68, 0.08)', 
+              color: '#F87171', 
+              border: '1px solid rgba(239, 68, 68, 0.2)', 
+              cursor: 'pointer',
               fontWeight: '600', 
-              transition: 'background 0.2s' 
+              transition: 'all 0.2s', 
+              borderRadius: '8px', 
+              fontSize: '0.85rem'
             }}
-            onMouseOver={e => e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)'}
-            onMouseOut={e => e.currentTarget.style.backgroundColor = 'transparent'}
+            onMouseOver={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.16)';
+              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.08)';
+              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.2)';
+            }}
           >
-            <LogOut size={20} />
-            <span>Logout</span>
+            <LogOut size={16} />
+            <span>Sign Out</span>
           </button>
         </div>
-      </div>
+      </aside>
 
       {/* Main Content Area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* Top Header */}
-        <header style={{ 
-          backgroundColor: 'white', 
-          borderBottom: '1px solid #e2e8f0', 
-          padding: '16px 32px', 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center', 
-          position: 'sticky', 
-          top: 0, 
-          zIndex: 30,
-          boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-        }}>
+      <div style={{ 
+        flex: 1, 
+        display: 'flex', 
+        flexDirection: 'column', 
+        minWidth: 0,
+        marginLeft: 0,
+        transition: 'margin-left 0.25s ease'
+      }} className="portal-main-content">
+        {/* Top Navbar */}
+        <header 
+          className="portal-header"
+          style={{
+            backgroundColor: 'var(--sh-white)',
+            padding: '14px 28px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderBottom: '1px solid var(--sh-slate-200)',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.03)',
+            position: 'sticky',
+            top: 0,
+            zIndex: 30,
+            transition: 'background-color 0.2s ease, border-color 0.2s ease'
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <button 
-              className="staff-menu-btn" 
+              className="lg-hidden" 
               onClick={() => setSidebarOpen(true)} 
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
+              style={{ 
+                background: 'transparent', 
+                border: '1px solid var(--sh-slate-200)', 
+                borderRadius: '8px',
+                padding: '6px',
+                cursor: 'pointer', 
+                color: 'var(--sh-slate-600)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              aria-label="Open sidebar"
             >
-              <Menu size={24} />
+              <Menu size={20} />
             </button>
-            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '700', color: '#0f172a' }}>
-              {getPageTitle()}
-            </h2>
+            <div>
+              <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '700', color: 'var(--sh-slate-900)', letterSpacing: '-0.01em' }}>
+                {getPageTitle()}
+              </h1>
+            </div>
           </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <ThemeToggle />
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
             <NotificationDropdown userRole="SecurityStaff" />
+            
+            <div style={{ height: '28px', width: '1px', backgroundColor: 'var(--sh-slate-200)' }}></div>
+            
             <div 
-              style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }} 
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '10px', 
+                cursor: 'pointer',
+                padding: '4px 8px',
+                borderRadius: '8px',
+                transition: 'background-color 0.15s ease'
+              }} 
               onClick={() => navigate('/staff/profile')}
+              onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--sh-slate-100)'}
+              onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
             >
-              <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column' }} className="staff-user-label">
-                <span style={{ margin: 0, fontSize: '0.875rem', fontWeight: '600', color: '#0f172a' }}>{user?.name || 'Staff Member'}</span>
-                <span style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>Security Staff</span>
+              <div style={{ textAlign: 'right', display: 'none', flexDirection: 'column' }} className="sm-flex">
+                <span style={{ fontWeight: '600', fontSize: '0.86rem', color: 'var(--sh-slate-900)', lineHeight: 1.2 }}>{user?.name || 'Gate Officer'}</span>
+                <span style={{ fontSize: '0.72rem', color: '#2563EB', fontWeight: '600' }}>Security Staff</span>
               </div>
-              <div style={{ width: '38px', height: '38px', borderRadius: '50%', backgroundColor: '#dbeafe', color: '#1e40af', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
-                {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
+              <div style={{ 
+                width: '38px', 
+                height: '38px', 
+                borderRadius: '50%', 
+                backgroundColor: 'rgba(37, 99, 235, 0.12)', 
+                color: '#2563EB', 
+                border: '2px solid rgba(37, 99, 235, 0.3)', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                fontWeight: '700',
+                fontSize: '0.9rem'
+              }}>
+                {user?.name?.charAt(0).toUpperCase() || 'G'}
               </div>
             </div>
           </div>
         </header>
 
         {/* Page Content */}
-        <main style={{ flex: 1, padding: '32px', overflowX: 'hidden' }}>
-          <Outlet />
+        <main style={{ flex: 1, padding: '28px 32px', overflowY: 'auto' }}>
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
 
@@ -191,22 +346,23 @@ const StaffLayout = () => {
         {`
           * { box-sizing: border-box; }
           body { margin: 0; padding: 0; }
+          .sm-flex { display: none !important; }
           @media (min-width: 1024px) {
-            .staff-menu-btn { display: none !important; }
-            .staff-mobile-close { display: none !important; }
-            .staff-sidebar {
-              position: static !important;
-              width: 280px !important;
-              transform: none !important;
+            .lg-hidden { display: none !important; }
+            .portal-sidebar { 
+              position: sticky !important; 
+              transform: none !important; 
             }
           }
+          @media (min-width: 640px) { .sm-flex { display: flex !important; } }
           @media (max-width: 640px) {
-            .staff-user-label { display: none !important; }
+            .portal-header { padding: 12px 16px !important; }
+            .portal-main-content main { padding: 20px 16px !important; }
           }
           ::-webkit-scrollbar { width: 6px; height: 6px; }
           ::-webkit-scrollbar-track { background: transparent; }
-          ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-          ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+          ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.3); border-radius: 4px; }
+          ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.5); }
         `}
       </style>
     </div>

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useContext, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import RefreshButton from '../components/shared/RefreshButton';
 import api from '../services/api';
 import { 
   Users, 
@@ -26,10 +28,10 @@ const KpiCard = ({ title, value, icon: Icon, color, bg, onClick, subtitle }) => 
   <div 
     onClick={onClick}
     style={{ 
-      backgroundColor: 'white', 
+      backgroundColor: 'var(--sh-white)', 
       borderRadius: '12px', 
       padding: '24px', 
-      border: '1px solid #e2e8f0', 
+      border: '1px solid var(--sh-slate-200)', 
       boxShadow: '0 1px 3px rgba(0,0,0,0.05)', 
       display: 'flex', 
       alignItems: 'center', 
@@ -40,7 +42,7 @@ const KpiCard = ({ title, value, icon: Icon, color, bg, onClick, subtitle }) => 
     onMouseOver={e => {
       if (onClick) {
         e.currentTarget.style.transform = 'translateY(-2px)';
-        e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.08)';
+        e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.12)';
         e.currentTarget.style.borderColor = color;
       }
     }}
@@ -48,7 +50,7 @@ const KpiCard = ({ title, value, icon: Icon, color, bg, onClick, subtitle }) => 
       if (onClick) {
         e.currentTarget.style.transform = 'translateY(0)';
         e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)';
-        e.currentTarget.style.borderColor = '#e2e8f0';
+        e.currentTarget.style.borderColor = 'var(--sh-slate-200)';
       }
     }}
   >
@@ -56,9 +58,9 @@ const KpiCard = ({ title, value, icon: Icon, color, bg, onClick, subtitle }) => 
       <Icon size={28} />
     </div>
     <div style={{ flex: 1, minWidth: 0 }}>
-      <p style={{ margin: '0 0 4px 0', fontSize: '0.8125rem', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</p>
-      <p style={{ margin: 0, fontSize: '1.75rem', fontWeight: '700', color: '#0f172a', lineHeight: 1.2 }}>{value}</p>
-      {subtitle && <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{subtitle}</span>}
+      <p style={{ margin: '0 0 4px 0', fontSize: '0.8125rem', fontWeight: '600', color: 'var(--sh-slate-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</p>
+      <p style={{ margin: 0, fontSize: '1.75rem', fontWeight: '700', color: 'var(--sh-slate-900)', lineHeight: 1.2 }}>{value}</p>
+      {subtitle && <span style={{ fontSize: '0.75rem', color: 'var(--sh-slate-400)' }}>{subtitle}</span>}
     </div>
   </div>
 );
@@ -66,15 +68,17 @@ const KpiCard = ({ title, value, icon: Icon, color, bg, onClick, subtitle }) => 
 const QuickAction = ({ label, icon: Icon, color, onClick }) => (
   <button 
     onClick={onClick}
-    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', padding: '20px', backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', cursor: 'pointer', transition: 'all 0.2s', fontWeight: '500', color: '#334155' }}
+    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', padding: '20px', backgroundColor: 'var(--sh-white)', border: '1px solid var(--sh-slate-200)', borderRadius: '12px', cursor: 'pointer', transition: 'all 0.2s', fontWeight: '500', color: 'var(--sh-slate-700)' }}
     onMouseOver={e => {
       e.currentTarget.style.borderColor = color;
       e.currentTarget.style.color = color;
-      e.currentTarget.style.boxShadow = `0 4px 12px ${color}20`;
+      e.currentTarget.style.transform = 'translateY(-2px)';
+      e.currentTarget.style.boxShadow = `0 6px 16px ${color}25`;
     }}
     onMouseOut={e => {
-      e.currentTarget.style.borderColor = '#e2e8f0';
-      e.currentTarget.style.color = '#334155';
+      e.currentTarget.style.borderColor = 'var(--sh-slate-200)';
+      e.currentTarget.style.color = 'var(--sh-slate-700)';
+      e.currentTarget.style.transform = 'none';
       e.currentTarget.style.boxShadow = 'none';
     }}
   >
@@ -87,6 +91,7 @@ const QuickAction = ({ label, icon: Icon, color, onClick }) => (
 
 const AdminDashboard = () => {
   const { user } = useContext(AuthContext);
+  const toast = useToast();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -108,9 +113,9 @@ const AdminDashboard = () => {
   const [recentComplaints, setRecentComplaints] = useState([]);
   const [recentPayments, setRecentPayments] = useState([]);
   
-  const fetchDashboardData = useCallback(async (isManual = false) => {
+  const fetchDashboardData = useCallback(async (isRefresh = false) => {
     try {
-      if (isManual) {
+      if (isRefresh) {
         setRefreshing(true);
       } else {
         setLoading(true);
@@ -279,11 +284,14 @@ const AdminDashboard = () => {
       console.error('Error fetching dashboard stats:', err);
       const msg = err.response?.data?.message || err.message || 'Failed to load dashboard statistics';
       setError(msg);
+      if (isRefresh) {
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -316,17 +324,17 @@ const AdminDashboard = () => {
     return (
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '60px 20px', textAlign: 'center' }}>
         <div style={{ 
-          backgroundColor: 'white', 
+          backgroundColor: 'var(--sh-white)', 
           borderRadius: '16px', 
           padding: '48px', 
-          border: '1px solid #e2e8f0',
+          border: '1px solid var(--sh-slate-200)',
           boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
           maxWidth: '480px',
           margin: '0 auto'
         }}>
-          <RefreshCw size={36} color="#3b82f6" style={{ animation: 'spin 1s linear infinite', margin: '0 auto 16px auto' }} />
-          <h3 style={{ margin: '0 0 8px 0', fontSize: '1.25rem', color: '#0f172a' }}>Loading Society Dashboard</h3>
-          <p style={{ margin: 0, color: '#64748b', fontSize: '0.925rem' }}>Fetching real-time records for your society...</p>
+          <RefreshCw size={36} color="#10b981" style={{ animation: 'spin 1s linear infinite', margin: '0 auto 16px auto' }} />
+          <h3 style={{ margin: '0 0 8px 0', fontSize: '1.25rem', color: 'var(--sh-slate-900)' }}>Loading Society Dashboard</h3>
+          <p style={{ margin: 0, color: 'var(--sh-slate-500)', fontSize: '0.925rem' }}>Fetching real-time records for your society...</p>
         </div>
       </div>
     );
@@ -344,56 +352,28 @@ const AdminDashboard = () => {
         gap: '16px'
       }}>
         <div>
-          <h2 style={{ fontSize: '2rem', fontWeight: '700', color: '#0f172a', margin: '0 0 6px 0' }}>
+          <h2 style={{ fontSize: '2rem', fontWeight: '700', color: 'var(--sh-slate-900)', margin: '0 0 6px 0', letterSpacing: '-0.02em' }}>
             {getGreeting()}, {user?.name || 'Administrator'}
           </h2>
-          <p style={{ margin: 0, fontSize: '1rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <p style={{ margin: 0, fontSize: '1rem', color: 'var(--sh-slate-500)', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span>Society Management Overview</span>
             <span>•</span>
-            <span style={{ fontWeight: '500', color: '#334155' }}>{user?.societyName || 'Authorized Society'}</span>
+            <span style={{ fontWeight: '600', color: '#10b981' }}>{user?.societyName || 'Authorized Society'}</span>
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {lastUpdated && (
-            <span style={{ fontSize: '0.8125rem', color: '#64748b' }}>
+            <span style={{ fontSize: '0.8125rem', color: 'var(--sh-slate-400)' }}>
               Updated {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </span>
           )}
-          <button
+          <RefreshButton
             onClick={() => fetchDashboardData(true)}
-            disabled={refreshing}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '8px 16px',
-              backgroundColor: 'white',
-              border: '1px solid #cbd5e1',
-              borderRadius: '8px',
-              fontSize: '0.875rem',
-              fontWeight: '600',
-              color: '#334155',
-              cursor: refreshing ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-            }}
-            onMouseOver={e => {
-              if (!refreshing) {
-                e.currentTarget.style.backgroundColor = '#f8fafc';
-                e.currentTarget.style.borderColor = '#94a3b8';
-              }
-            }}
-            onMouseOut={e => {
-              if (!refreshing) {
-                e.currentTarget.style.backgroundColor = 'white';
-                e.currentTarget.style.borderColor = '#cbd5e1';
-              }
-            }}
-          >
-            <RefreshCw size={15} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
-            <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
-          </button>
+            refreshing={refreshing}
+            loading={loading}
+            title="Refresh dashboard stats"
+          />
         </div>
       </div>
 
@@ -522,7 +502,7 @@ const AdminDashboard = () => {
 
       {/* QUICK ACTIONS */}
       <div style={{ marginBottom: '40px' }}>
-        <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#0f172a', marginBottom: '20px' }}>Quick Actions</h3>
+        <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--sh-slate-900)', marginBottom: '20px' }}>Quick Actions</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '20px' }}>
           <QuickAction label="Generate Bill" icon={Receipt} color="#10b981" onClick={() => navigate('/admin/bills')} />
           <QuickAction label="Review Complaints" icon={Activity} color="#f59e0b" onClick={() => navigate('/admin/complaints')} />
@@ -538,35 +518,35 @@ const AdminDashboard = () => {
       {/* RECENT ACTIVITY: COMPLAINTS & PAYMENTS */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '32px' }}>
         {/* RECENT COMPLAINTS */}
-        <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-          <div style={{ padding: '20px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: '#0f172a' }}>Recent Complaints</h3>
+        <div style={{ backgroundColor: 'var(--sh-white)', borderRadius: '12px', border: '1px solid var(--sh-slate-200)', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--sh-slate-200)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--sh-slate-900)' }}>Recent Complaints</h3>
             <button 
               onClick={() => navigate('/admin/complaints')} 
-              style={{ background: 'transparent', border: 'none', color: '#3b82f6', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.875rem' }}
+              style={{ background: 'transparent', border: 'none', color: '#10b981', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.875rem' }}
             >
               View All <ArrowRight size={16} />
             </button>
           </div>
           {recentComplaints.length === 0 ? (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' }}>No recent complaints in your society</div>
+            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--sh-slate-500)', fontSize: '0.9rem' }}>No recent complaints in your society</div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                <thead style={{ backgroundColor: '#f8fafc' }}>
+                <thead style={{ backgroundColor: 'var(--sh-slate-100)' }}>
                   <tr>
-                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: '#64748b' }}>Title</th>
-                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: '#64748b' }}>Status</th>
-                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: '#64748b' }}>Date</th>
+                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Title</th>
+                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Status</th>
+                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Date</th>
                   </tr>
                 </thead>
                 <tbody>
                   {recentComplaints.map(c => (
-                    <tr key={c._id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '16px 24px', fontSize: '0.875rem', fontWeight: '500', color: '#0f172a' }}>
+                    <tr key={c._id} style={{ borderBottom: '1px solid var(--sh-slate-100)' }}>
+                      <td style={{ padding: '16px 24px', fontSize: '0.875rem', fontWeight: '500', color: 'var(--sh-slate-900)' }}>
                         <div>{c.title}</div>
                         {c.createdBy?.name && (
-                          <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--sh-slate-400)' }}>
                             {c.createdBy.name} {c.createdBy.flatNumber ? `(Flat ${c.createdBy.flatNumber})` : ''}
                           </div>
                         )}
@@ -583,7 +563,7 @@ const AdminDashboard = () => {
                           {c.status}
                         </span>
                       </td>
-                      <td style={{ padding: '16px 24px', fontSize: '0.8125rem', color: '#64748b' }}>
+                      <td style={{ padding: '16px 24px', fontSize: '0.8125rem', color: 'var(--sh-slate-500)' }}>
                         {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : '—'}
                       </td>
                     </tr>
@@ -595,38 +575,38 @@ const AdminDashboard = () => {
         </div>
 
         {/* RECENT PAYMENTS */}
-        <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-          <div style={{ padding: '20px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: '#0f172a' }}>Recent Payments</h3>
+        <div style={{ backgroundColor: 'var(--sh-white)', borderRadius: '12px', border: '1px solid var(--sh-slate-200)', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--sh-slate-200)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--sh-slate-900)' }}>Recent Payments</h3>
             <button 
               onClick={() => navigate('/admin/finance')} 
-              style={{ background: 'transparent', border: 'none', color: '#3b82f6', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.875rem' }}
+              style={{ background: 'transparent', border: 'none', color: '#10b981', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.875rem' }}
             >
               View All <ArrowRight size={16} />
             </button>
           </div>
           {recentPayments.length === 0 ? (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' }}>No recent payments recorded</div>
+            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--sh-slate-500)', fontSize: '0.9rem' }}>No recent payments recorded</div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                <thead style={{ backgroundColor: '#f8fafc' }}>
+                <thead style={{ backgroundColor: 'var(--sh-slate-100)' }}>
                   <tr>
-                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: '#64748b' }}>Resident</th>
-                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: '#64748b' }}>Amount</th>
-                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: '#64748b' }}>Status</th>
+                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Resident</th>
+                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Amount</th>
+                    <th style={{ padding: '12px 24px', fontSize: '0.8125rem', fontWeight: '600', color: 'var(--sh-slate-500)' }}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {recentPayments.map(p => (
-                    <tr key={p._id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '16px 24px', fontSize: '0.875rem', fontWeight: '500', color: '#0f172a' }}>
+                    <tr key={p._id} style={{ borderBottom: '1px solid var(--sh-slate-100)' }}>
+                      <td style={{ padding: '16px 24px', fontSize: '0.875rem', fontWeight: '500', color: 'var(--sh-slate-900)' }}>
                         <div>{p.residentId?.name || 'Resident'}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--sh-slate-400)' }}>
                           {p.residentId?.flatNumber ? `Flat ${p.residentId.flatNumber}` : ''} {p.billId?.month ? `• ${p.billId.month}` : ''}
                         </div>
                       </td>
-                      <td style={{ padding: '16px 24px', fontSize: '0.875rem', fontWeight: '700', color: '#0f172a' }}>
+                      <td style={{ padding: '16px 24px', fontSize: '0.875rem', fontWeight: '700', color: 'var(--sh-slate-900)' }}>
                         ₹{(p.amount || 0).toLocaleString('en-IN')}
                       </td>
                       <td style={{ padding: '16px 24px' }}>

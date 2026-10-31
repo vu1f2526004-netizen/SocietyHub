@@ -26,27 +26,65 @@ exports.createIssue = async (req, res, next) => {
 
 exports.getIssues = async (req, res, next) => {
   try {
-    let issues;
-    if (req.user.role === 'Admin') {
-      // Admin sees everything within their society including reporter details
-      issues = await CommunityIssue.find({ societyId: req.user.societyId })
-        .populate('reporterId', 'name flatNumber')
-        .populate('assignedTo', 'name');
-    } else if (req.user.role === 'Resident') {
-      // Residents only see approved issues of their society, reporter ID is never exposed
-      issues = await CommunityIssue.find({
-        societyId: req.user.societyId,
-        status: { $in: ['Approved', 'Resolved'] }
-      }).select('-reporterId'); 
-    } else if (req.user.role === 'SecurityStaff') {
-      // Staff only sees assigned issues within their society
-      issues = await CommunityIssue.find({
-        societyId: req.user.societyId,
-        assignedTo: req.user.id
-      });
+    const andConditions = [{ societyId: req.user.societyId }];
+
+    if (req.query.status && req.query.status !== 'All') {
+      andConditions.push({ status: req.query.status });
     }
 
-    res.status(200).json({ success: true, data: issues });
+    if (req.query.issueType && req.query.issueType !== 'All') {
+      andConditions.push({ issueType: req.query.issueType });
+    }
+
+    if (req.query.search && req.query.search.trim()) {
+      const searchRegex = new RegExp(req.query.search.trim(), 'i');
+
+      const searchOr = [
+        { title: searchRegex },
+        { description: searchRegex },
+        { location: searchRegex },
+        { vehicleNumber: searchRegex },
+        { issueType: searchRegex }
+      ];
+
+      if (req.user.role === 'Admin') {
+        const matchingUsers = await User.find({
+          societyId: req.user.societyId,
+          $or: [
+            { name: searchRegex },
+            { flatNumber: searchRegex }
+          ]
+        }).select('_id');
+        const matchingUserIds = matchingUsers.map(u => u._id);
+        if (matchingUserIds.length > 0) {
+          searchOr.push({ reporterId: { $in: matchingUserIds } });
+        }
+      }
+
+      andConditions.push({ $or: searchOr });
+    }
+
+    let issues;
+    if (req.user.role === 'Admin') {
+      const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+      issues = await CommunityIssue.find(filter)
+        .populate('reporterId', 'name flatNumber email')
+        .populate('assignedTo', 'name')
+        .sort({ createdAt: -1 });
+    } else if (req.user.role === 'Resident') {
+      andConditions.push({ status: { $in: ['Approved', 'Resolved'] } });
+      const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+      issues = await CommunityIssue.find(filter)
+        .select('-reporterId')
+        .sort({ createdAt: -1 });
+    } else if (req.user.role === 'SecurityStaff') {
+      andConditions.push({ assignedTo: req.user.id });
+      const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
+      issues = await CommunityIssue.find(filter)
+        .sort({ createdAt: -1 });
+    }
+
+    res.status(200).json({ success: true, count: (issues || []).length, data: issues || [] });
   } catch (err) {
     next(err);
   }
