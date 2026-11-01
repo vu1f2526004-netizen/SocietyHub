@@ -280,6 +280,27 @@ asyncTest('Validation: Password mismatch returns HTTP 400', async () => {
   assert.strictEqual(err.message, 'Confirm Password does not match Password');
 });
 
+// 6. Verify shared API client usage and Render endpoint resolution
+test('Registration handler strictly routes through shared API client with Render backend target', () => {
+  const regCode = fs.readFileSync(path.resolve(__dirname, '../../client/src/pages/RegisterSociety.jsx'), 'utf8');
+  assert(regCode.includes('useContext(AuthContext)'), 'RegisterSociety must consume AuthContext');
+  assert(regCode.includes('await registerSociety(registrationPayload)'), 'RegisterSociety must call registerSociety');
+
+  const authCode = fs.readFileSync(path.resolve(__dirname, '../../client/src/context/AuthContext.jsx'), 'utf8');
+  assert(authCode.includes("import api, { getAuthToken, getActiveRoleFromPath } from '../services/api'"), 'AuthContext must import shared api');
+  assert(authCode.includes("await api.post('/auth/register-society', societyData)"), 'registerSociety must call api.post on shared api instance');
+
+  const apiCode = fs.readFileSync(path.resolve(__dirname, '../../client/src/services/api.js'), 'utf8');
+  assert(apiCode.includes('import.meta.env.VITE_BASE_URL'), 'api.js must check VITE_BASE_URL');
+  assert(apiCode.includes('https://societyhub-api-2eoh.onrender.com/api'), 'api.js must target Render origin');
+  assert(!apiCode.includes("return '/api';\n  }\n  return 'http://localhost:5000/api';"), 'Must not silently fall back to relative /api on Vercel');
+
+  const vercelJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../client/vercel.json'), 'utf8'));
+  const apiProxy = vercelJson.rewrites.find(r => r.source === '/api/:path*');
+  assert(apiProxy, 'vercel.json must have /api/:path* reverse-proxy rule');
+  assert.strictEqual(apiProxy.destination, 'https://societyhub-api-2eoh.onrender.com/api/:path*');
+});
+
 setTimeout(() => {
   console.log('\n=============================================================');
   console.log(`RESULTS: ${passed} passed, ${failed} failed`);

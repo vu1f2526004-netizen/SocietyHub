@@ -42,14 +42,46 @@ export const getAuthToken = () => {
   }
 };
 
+export const RENDER_BACKEND_URL = 'https://societyhub-api-2eoh.onrender.com/api';
+
+/**
+ * Normalizes an API URL to ensure it has no trailing slash and includes the required /api prefix.
+ * Avoids duplicate path segments like /api/api or missing prefixes.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+export const normalizeApiUrl = (url) => {
+  if (!url || typeof url !== 'string') return '';
+  let cleaned = url.trim().replace(/\/+$/, '');
+  if (!cleaned) return '';
+  if (!cleaned.endsWith('/api')) {
+    cleaned = `${cleaned}/api`;
+  }
+  return cleaned;
+};
+
 export const getApiBaseUrl = () => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
+  // Read VITE_BASE_URL primarily, with fallback to VITE_API_URL
+  const envUrl = import.meta.env.VITE_BASE_URL || import.meta.env.VITE_API_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+    const trimmed = envUrl.trim();
+    // If set to relative /api in production on a decoupled host like Vercel, route directly to Render backend
+    if (trimmed === '/api' || trimmed === '/api/') {
+      if (import.meta.env.PROD) {
+        return RENDER_BACKEND_URL;
+      }
+      return '/api';
+    }
+    return normalizeApiUrl(trimmed);
   }
-  // In production, fallback to same-origin /api to avoid sending requests to localhost:5000
+
+  // Authoritative production fallback: route directly to deployed Render backend
   if (import.meta.env.PROD) {
-    return '/api';
+    return RENDER_BACKEND_URL;
   }
+
+  // Local development default
   return 'http://localhost:5000/api';
 };
 
