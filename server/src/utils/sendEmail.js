@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { sendResendEmail, isResendConfigured } = require('../services/resendEmailService');
 
 /**
  * Cached singleton transporter instance.
@@ -95,9 +96,55 @@ const validateEmailParams = ({ to, subject, text, html }) => {
 };
 
 /**
- * Safe email notification dispatcher.
- * Delivers transactional emails via Nodemailer when SMTP credentials are configured.
- * Safely falls back if SMTP is unconfigured without disrupting business operations.
+ * Dispatches email via Nodemailer SMTP.
+ */
+const sendViaNodemailer = async ({ to, subject, text, html, replyTo, normalizedTo }) => {
+  const transporter = getTransporter();
+  if (!transporter) {
+    return {
+      success: false,
+      sent: false,
+      reason: 'SMTP_NOT_CONFIGURED'
+    };
+  }
+
+  const rawFromEmail = process.env.FROM_EMAIL;
+  const isPlaceholderFrom = !rawFromEmail || rawFromEmail.includes('YOUR_') || rawFromEmail.includes('placeholder') || !rawFromEmail.includes('@');
+  const fromEmail = isPlaceholderFrom
+    ? (process.env.MAIL_USER || process.env.SMTP_USER || 'no-reply@societyhub.internal')
+    : rawFromEmail.trim();
+  const fromName = process.env.FROM_NAME || 'SocietyHub';
+  const from = `"${fromName}" <${fromEmail}>`;
+
+  const mailOptions = {
+    from,
+    to: normalizedTo,
+    subject: subject.trim(),
+    text: text ? text.trim() : undefined,
+    html: html ? html.trim() : undefined
+  };
+
+  if (replyTo && typeof replyTo === 'string' && replyTo.trim()) {
+    mailOptions.replyTo = replyTo.trim().toLowerCase();
+  }
+
+  const info = await transporter.sendMail(mailOptions);
+  console.log(`[SMTP ACCEPTED] Email accepted by SMTP relay for ${normalizedTo} (MessageId: ${info.messageId})`);
+  return {
+    success: true,
+    sent: true,
+    acceptedBySmtp: true,
+    acceptedByProvider: true,
+    provider: 'smtp',
+    messageId: info.messageId,
+    response: info.response
+  };
+};
+
+/**
+ * Universal safe email notification dispatcher.
+ * Prioritizes Resend HTTPS API in production (bypassing outbound SMTP port restrictions on Render Free).
+ * Seamlessly falls back to Nodemailer SMTP or mocks as configured.
  *
  * @param {object} options
  * @param {string} options.to - Recipient email address
@@ -105,13 +152,15 @@ const validateEmailParams = ({ to, subject, text, html }) => {
  * @param {string} [options.text] - Plain text body
  * @param {string} [options.html] - HTML formatted body
  * @param {string} [options.replyTo] - Optional Reply-To address
- * @returns {Promise<{ sent: boolean, reason?: string, messageId?: string, error?: string, acceptedBySmtp?: boolean }>}
+ * @param {string} [options.idempotencyKey] - Optional idempotency key for Resend
+ * @param {Array} [options.attachments] - Optional attachments
+ * @returns {Promise<{ success: boolean, sent: boolean, reason?: string, messageId?: string, error?: string, acceptedByProvider?: boolean, provider?: string }>}
  */
-const sendEmail = async ({ to, subject, text, html, replyTo }) => {
+const sendEmail = async ({ to, subject, text, html, replyTo, idempotencyKey, attachments }) => {
   // 1. Parameter Validation
   const validationError = validateEmailParams({ to, subject, text, html });
   if (validationError) {
-    console.warn(`[SMTP WARN] Email dispatch skipped: ${validationError}`);
+    console.warn(`[EMAIL WARN] Email dispatch skipped: ${validationError}`);
     return {
       success: false,
       sent: false,
@@ -122,69 +171,67 @@ const sendEmail = async ({ to, subject, text, html, replyTo }) => {
 
   const normalizedTo = to.trim().toLowerCase();
 
-  // 2. Configuration Check
-  if (!cachedTransporter && !isSmtpConfigured()) {
-    console.log(`[SMTP INFO] SMTP not configured. Skipped email notification to: ${normalizedTo}`);
-    return {
-      success: false,
-      sent: false,
-      reason: 'SMTP_NOT_CONFIGURED'
-    };
-  }
-
-  // 3. Acquire Transporter
-  try {
-    const transporter = getTransporter();
-    if (!transporter) {
+  // 2. Explicit Mocked Transporter Check (for test fixtures that call setTransporter)
+  if (cachedTransporter) {
+    try {
+      return await sendViaNodemailer({ to, subject, text, html, replyTo, normalizedTo });
+    } catch (err) {
+      console.error(`[SMTP ERROR] Failed to transmit email to ${normalizedTo}: ${err.message}`);
       return {
         success: false,
         sent: false,
-        reason: 'SMTP_NOT_CONFIGURED'
+        reason: 'SMTP_SEND_FAILED',
+        error: err.message
       };
     }
+  }
 
-    const rawFromEmail = process.env.FROM_EMAIL;
-    const isPlaceholderFrom = !rawFromEmail || rawFromEmail.includes('YOUR_') || rawFromEmail.includes('placeholder') || !rawFromEmail.includes('@');
-    const fromEmail = isPlaceholderFrom
-      ? (process.env.MAIL_USER || process.env.SMTP_USER || 'no-reply@societyhub.internal')
-      : rawFromEmail.trim();
-    const fromName = process.env.FROM_NAME || 'SocietyHub';
-    const from = `"${fromName}" <${fromEmail}>`;
-
-    // 4. Dispatch Email to SMTP Server
-    const mailOptions = {
-      from,
+  // 3. Primary Dispatcher: Resend HTTPS API (avoids Render Free SMTP port blocks)
+  if (isResendConfigured()) {
+    const resendResult = await sendResendEmail({
       to: normalizedTo,
-      subject: subject.trim(),
-      text: text ? text.trim() : undefined,
-      html: html ? html.trim() : undefined
-    };
+      subject,
+      text,
+      html,
+      replyTo,
+      idempotencyKey,
+      attachments
+    });
 
-    if (replyTo && typeof replyTo === 'string' && replyTo.trim()) {
-      mailOptions.replyTo = replyTo.trim().toLowerCase();
-    }
-
-    const info = await transporter.sendMail(mailOptions);
-
-    // Note: Accurately record SMTP acceptance (relay handoff), not inbox delivery.
-    console.log(`[SMTP ACCEPTED] Email accepted by SMTP relay for ${normalizedTo} (MessageId: ${info.messageId})`);
     return {
-      success: true,
-      sent: true,
-      acceptedBySmtp: true,
-      messageId: info.messageId,
-      response: info.response
-    };
-  } catch (err) {
-    // Never log passwords, SMTP auth tokens, or secrets.
-    console.error(`[SMTP ERROR] Failed to transmit email to ${normalizedTo}: ${err.message}`);
-    return {
-      success: false,
-      sent: false,
-      reason: 'SMTP_SEND_FAILED',
-      error: err.message
+      success: resendResult.success,
+      sent: resendResult.success,
+      acceptedByProvider: resendResult.success,
+      acceptedBySmtp: resendResult.success,
+      provider: 'resend',
+      messageId: resendResult.messageId,
+      error: resendResult.error,
+      reason: resendResult.reason
     };
   }
+
+  // 4. Fallback Dispatcher: Nodemailer SMTP
+  if (isSmtpConfigured()) {
+    try {
+      return await sendViaNodemailer({ to, subject, text, html, replyTo, normalizedTo });
+    } catch (err) {
+      console.error(`[SMTP ERROR] Failed to transmit email to ${normalizedTo}: ${err.message}`);
+      return {
+        success: false,
+        sent: false,
+        reason: 'SMTP_SEND_FAILED',
+        error: err.message
+      };
+    }
+  }
+
+  // 5. Neither service is configured: skip gracefully without failing business workflow
+  console.log(`[EMAIL INFO] Neither Resend nor SMTP is configured. Skipped email notification to: ${normalizedTo}`);
+  return {
+    success: false,
+    sent: false,
+    reason: 'EMAIL_NOT_CONFIGURED'
+  };
 };
 
 // Export as both callable function and named exports for maximum caller compatibility
@@ -197,4 +244,3 @@ sendEmail.validateEmailParams = validateEmailParams;
 sendEmail.default = sendEmail;
 
 module.exports = sendEmail;
-

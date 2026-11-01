@@ -254,7 +254,7 @@ const residentPendingBillReminder = ({ residentName, societyName, flatNumber, bi
 /**
  * D. Resident: Payment Confirmed (Receipt)
  */
-const residentPaymentConfirmed = ({ residentName, societyName, flatNumber, amount, receiptNumber, paymentId, month, paymentDate, portalUrl }) => {
+const residentPaymentConfirmed = ({ residentName, societyName, flatNumber, amount, receiptNumber, paymentId, month, paymentDate, portalUrl, paymentMethod = 'Razorpay Online', status = 'Verified Paid' }) => {
   const safeName = escapeHtml(residentName);
   const safeSociety = escapeHtml(societyName);
   const safeFlat = escapeHtml(flatNumber);
@@ -263,6 +263,8 @@ const residentPaymentConfirmed = ({ residentName, societyName, flatNumber, amoun
   const safePaymentId = escapeHtml(paymentId);
   const safeMonth = escapeHtml(month);
   const safeDate = escapeHtml(new Date(paymentDate || Date.now()).toLocaleDateString());
+  const safeMethod = escapeHtml(paymentMethod || 'Razorpay Online');
+  const safeStatus = escapeHtml(status || 'Verified Paid');
 
   const title = 'Payment Confirmed';
   const preheader = `Payment receipt for ₹${safeAmount} (${safeMonth}) confirmed.`;
@@ -274,21 +276,23 @@ const residentPaymentConfirmed = ({ residentName, societyName, flatNumber, amoun
       <table style="width: 100%; font-size: 13px;">
         <tr><td style="color: #166534; padding: 4px 0;">Receipt Number:</td><td style="font-weight: 700; text-align: right; color: #166534;">${safeReceipt}</td></tr>
         <tr><td style="color: #64748b; padding: 4px 0;">Transaction Ref:</td><td style="font-weight: 600; text-align: right;">${safePaymentId}</td></tr>
-        <tr><td style="color: #64748b; padding: 4px 0;">Period:</td><td style="font-weight: 600; text-align: right;">${safeMonth}</td></tr>
+        <tr><td style="color: #64748b; padding: 4px 0;">Billing Period:</td><td style="font-weight: 600; text-align: right;">${safeMonth}</td></tr>
         <tr><td style="color: #64748b; padding: 4px 0;">Confirmed Amount:</td><td style="font-weight: 700; color: #166534; font-size: 16px; text-align: right;">₹${safeAmount}</td></tr>
+        <tr><td style="color: #64748b; padding: 4px 0;">Payment Method:</td><td style="font-weight: 600; text-align: right;">${safeMethod}</td></tr>
+        <tr><td style="color: #64748b; padding: 4px 0;">Payment Status:</td><td style="font-weight: 700; color: #166534; text-align: right;">${safeStatus}</td></tr>
         <tr><td style="color: #64748b; padding: 4px 0;">Payment Date:</td><td style="font-weight: 600; text-align: right;">${safeDate}</td></tr>
       </table>
     </div>
-    <p>Thank you for keeping your society maintenance dues up to date.</p>
+    <p>Thank you for keeping your society maintenance dues up to date. You can view or download your official payment receipt anytime from the resident portal.</p>
   `;
 
-  const text = `Hello ${residentName},\n\nYour maintenance payment for ${month} (Flat ${flatNumber}) has been confirmed successfully.\n\nReceipt Number: ${receiptNumber}\nTransaction Reference: ${paymentId}\nPeriod: ${month}\nConfirmed Amount: INR ${amount}\nPayment Date: ${new Date(paymentDate || Date.now()).toLocaleDateString()}\n\nView History: ${portalUrl}\n\nThank you,\n${societyName} Management`;
+  const text = `Hello ${residentName},\n\nYour maintenance payment for ${month} (Flat ${flatNumber}) has been confirmed successfully.\n\nReceipt Number: ${receiptNumber}\nTransaction Reference: ${paymentId}\nBilling Period: ${month}\nConfirmed Amount: INR ${amount}\nPayment Method: ${paymentMethod}\nStatus: ${status}\nPayment Date: ${new Date(paymentDate || Date.now()).toLocaleDateString()}\n\nView & Download Receipt: ${portalUrl}\n\nThank you,\n${societyName} Management`;
 
   const html = renderEmailLayout({
     title,
     preheader,
     bodyContentHtml,
-    ctaText: 'View Payment History',
+    ctaText: 'View & Download Receipt',
     ctaUrl: portalUrl,
     societyName
   });

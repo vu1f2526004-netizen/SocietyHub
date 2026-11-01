@@ -244,8 +244,12 @@ exports.verifyPayment = async (req, res, next) => {
     }
 
     // In-app notifications & transactional emails (Resident receipt + Admin ledger alert)
-    // with durable deduplication via emailReceiptSent
-    await notifyPaymentConfirmed({ paymentId: payment._id, societyId: req.user.societyId });
+    // Protected so email delivery outcome never invalidates or rolls back verified payment
+    try {
+      await notifyPaymentConfirmed({ paymentId: payment._id, societyId: req.user.societyId });
+    } catch (notifyErr) {
+      console.warn(`[NOTIFY PAYMENT WARNING] Failed to deliver confirmation notifications: ${notifyErr.message}`);
+    }
 
     res.status(200).json({ success: true, data: payment });
   } catch (err) {
@@ -1138,11 +1142,15 @@ exports.handleRazorpayWebhook = async (req, res, next) => {
       }
 
       // Trigger transactional receipt email to Resident + Ledger notification to Admins
-      // (Deduplicated atomically via emailReceiptSent: { $ne: true })
-      await notifyPaymentConfirmed({
-        paymentId: payment._id,
-        societyId: payment.societyId
-      });
+      // Protected so email delivery outcome never fails the webhook acknowledgment
+      try {
+        await notifyPaymentConfirmed({
+          paymentId: payment._id,
+          societyId: payment.societyId
+        });
+      } catch (notifyErr) {
+        console.warn(`[NOTIFY WEBHOOK WARNING] Failed to deliver confirmation notifications: ${notifyErr.message}`);
+      }
 
       return res.status(200).json({
         success: true,

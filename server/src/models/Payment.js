@@ -95,6 +95,44 @@ const PaymentSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Resident email notification tracking
+  residentNotificationStatus: {
+    type: String,
+    enum: ['Pending', 'Sent', 'Failed', 'Skipped'],
+    default: 'Pending',
+    index: true
+  },
+  residentEmailMessageId: {
+    type: String,
+    default: null
+  },
+  residentNotifiedAt: {
+    type: Date,
+    default: null
+  },
+  residentNotificationError: {
+    type: String,
+    default: null
+  },
+  // Secretary / Admin email notification tracking
+  adminNotificationStatus: {
+    type: String,
+    enum: ['Pending', 'Sent', 'Failed', 'Skipped'],
+    default: 'Pending',
+    index: true
+  },
+  adminEmailMessageId: {
+    type: String,
+    default: null
+  },
+  adminNotifiedAt: {
+    type: Date,
+    default: null
+  },
+  adminNotificationError: {
+    type: String,
+    default: null
+  },
   webhookProcessedAt: {
     type: Date
   },

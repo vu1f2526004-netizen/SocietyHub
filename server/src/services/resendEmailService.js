@@ -67,9 +67,11 @@ const resetDispatcher = () => {
  * @param {string} [params.html] - HTML body
  * @param {string} [params.replyTo] - Visitor/Sender reply-to address
  * @param {string} [params.from] - Optional sender override (defaults to process.env.EMAIL_FROM)
+ * @param {string} [params.idempotencyKey] - Unique key to guarantee idempotency and avoid duplicate delivery
+ * @param {Array} [params.attachments] - Optional attachments array [{ filename, content }]
  * @returns {Promise<{ success: boolean, messageId?: string, error?: string, reason?: string, provider: 'resend' }>}
  */
-const sendResendEmail = async ({ to, subject, text, html, replyTo, from: senderOverride }) => {
+const sendResendEmail = async ({ to, subject, text, html, replyTo, from: senderOverride, idempotencyKey, attachments }) => {
   const apiKey = (process.env.RESEND_API_KEY || '').trim();
   const fromEmail = (senderOverride || process.env.EMAIL_FROM || '').trim();
 
@@ -119,19 +121,29 @@ const sendResendEmail = async ({ to, subject, text, html, replyTo, from: senderO
     payload.reply_to = replyTo.trim().toLowerCase();
   }
 
-  // 3. Dispatch to Resend HTTPS API
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    payload.attachments = attachments;
+  }
+
+  // 3. Dispatch to Resend HTTPS API with Idempotency Key header if supplied
   try {
     const fetchFn = customDispatcher || globalThis.fetch;
     if (typeof fetchFn !== 'function') {
       throw new Error('No fetch implementation available in current runtime');
     }
 
+    const headers = {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    };
+
+    if (idempotencyKey && typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
+      headers['Idempotency-Key'] = idempotencyKey.trim();
+    }
+
     const response = await fetchFn('https://api.resend.com/emails', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined
     });

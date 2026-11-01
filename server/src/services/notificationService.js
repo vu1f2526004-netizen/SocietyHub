@@ -291,20 +291,22 @@ const notifyResidentBillReminder = async ({ billId, societyId }) => {
 
 /**
  * 1D & 2B. Payment Confirmation (Resident Receipt + Admin Ledger Alert)
- * Durable deduplication ensures webhook retries or repeat calls never send duplicate receipts.
+ * Uses Resend HTTPS API with stable idempotency keys and independent status tracking.
+ * Guarantees that email provider failure never rolls back or invalidates verified payments.
  */
 const notifyPaymentConfirmed = async ({ paymentId, societyId }) => {
   try {
-    // Durable atomic deduplication: only proceeds if emailReceiptSent was not already true
-    const payment = await Payment.findOneAndUpdate(
-      { _id: paymentId, societyId, status: 'Success', emailReceiptSent: { $ne: true } },
-      { $set: { emailReceiptSent: true } },
-      { new: true }
-    );
-
+    const payment = await Payment.findOne({ _id: paymentId, societyId, status: 'Success' });
     if (!payment) {
-      // Already sent or payment not found/not successful
-      return;
+      return { success: false, reason: 'PAYMENT_NOT_FOUND_OR_NOT_SUCCESS' };
+    }
+
+    const residentAlreadySent = payment.residentNotificationStatus === 'Sent' || payment.emailReceiptSent === true;
+    const adminAlreadySent = payment.adminNotificationStatus === 'Sent';
+
+    // If both notifications have already been delivered, return idempotently
+    if (residentAlreadySent && adminAlreadySent) {
+      return { success: true, message: 'Notifications already delivered' };
     }
 
     const resident = await User.findOne({ _id: payment.residentId, societyId });
@@ -312,67 +314,140 @@ const notifyPaymentConfirmed = async ({ paymentId, societyId }) => {
     const society = await Society.findById(societyId);
     const societyName = society ? society.name : 'Your Society';
     const clientUrl = getClientBaseUrl();
+    const portalUrl = `${clientUrl}/resident/payments`;
 
-    // 1D. Send Resident Receipt
-    if (resident && resident.email) {
+    const recipientEmail = payment.payerEmail || resident?.email;
+    const recipientName = payment.payerName || resident?.name || 'Resident';
+    const flatNumber = payment.flatNumber || bill?.flatNumber || resident?.flatNumber || 'N/A';
+    const month = payment.billingMonth || bill?.month || 'Maintenance';
+    const receiptNumber = payment.receiptNumber || `REC-${payment._id}`;
+    const paymentIdStr = payment.razorpayPaymentId || payment.razorpayOrderId || 'N/A';
+    const paymentMethod = payment.paymentMethod || 'Razorpay Online';
+
+    // 1. Safe In-App Notification (dispatched once)
+    if (resident && !residentAlreadySent) {
       await safeCreateInAppNotification({
         userId: resident._id,
         societyId,
         title: 'Payment Successful',
-        message: `Payment of ₹${payment.amount} for ${bill ? bill.month : 'Maintenance'} successful (Receipt: ${payment.receiptNumber || 'N/A'}).`,
+        message: `Payment of ₹${payment.amount} for ${month} successful (Receipt: ${receiptNumber}).`,
         type: 'Success',
         link: '/resident/payments'
       });
-
-      const residentEmailData = templates.residentPaymentConfirmed({
-        residentName: resident.name,
-        societyName,
-        flatNumber: bill ? bill.flatNumber : (resident.flatNumber || 'N/A'),
-        amount: payment.amount,
-        receiptNumber: payment.receiptNumber || `REC-${payment._id}`,
-        paymentId: payment.razorpayPaymentId || payment.razorpayOrderId,
-        month: bill ? bill.month : 'Maintenance',
-        paymentDate: payment.paidAt || Date.now(),
-        portalUrl: `${clientUrl}/resident/payments`
-      });
-
-      await sendEmail({
-        to: resident.email,
-        subject: residentEmailData.subject,
-        text: residentEmailData.text,
-        html: residentEmailData.html
-      });
     }
 
-    // 2B. Send Admin Society Financial Tracking Alert (same society only)
-    const admins = await User.find({ societyId, role: 'Admin', status: 'Active' });
-    if (admins && admins.length > 0) {
-      const ledgerUrl = `${clientUrl}/admin/payments`;
-      for (const admin of admins) {
-        if (admin.email) {
+    // 2. Dispatch Resident Payment Success & Receipt Email
+    if (!residentAlreadySent && recipientEmail) {
+      const residentIdempotencyKey = `payment-resident-${payment._id}-${receiptNumber}`;
+      const residentEmailData = templates.residentPaymentConfirmed({
+        residentName: recipientName,
+        societyName,
+        flatNumber,
+        amount: payment.amount,
+        receiptNumber,
+        paymentId: paymentIdStr,
+        month,
+        paymentDate: payment.paidAt || Date.now(),
+        portalUrl,
+        paymentMethod,
+        status: 'Verified Paid'
+      });
+
+      const residentResult = await sendEmail({
+        to: recipientEmail,
+        subject: residentEmailData.subject,
+        text: residentEmailData.text,
+        html: residentEmailData.html,
+        idempotencyKey: residentIdempotencyKey
+      });
+
+      if (residentResult.success) {
+        payment.residentNotificationStatus = 'Sent';
+        payment.residentEmailMessageId = residentResult.messageId || null;
+        payment.residentNotifiedAt = new Date();
+        payment.residentNotificationError = null;
+        payment.emailReceiptSent = true;
+        console.log(`[PAYMENT EMAIL DELIVERED] Resident receipt sent to "${recipientEmail}" (MessageId: ${residentResult.messageId || 'N/A'})`);
+      } else {
+        payment.residentNotificationStatus = 'Failed';
+        payment.residentNotificationError = residentResult.error || residentResult.reason || 'Delivery failed';
+        console.warn(`[PAYMENT EMAIL NOTICE] Resident receipt dispatch failed for "${recipientEmail}": ${payment.residentNotificationError}. Payment remains verified.`);
+      }
+    } else if (!recipientEmail) {
+      payment.residentNotificationStatus = 'Skipped';
+      payment.residentNotificationError = 'No resident/payer email address available';
+    }
+
+    // 3. Dispatch Secretary / Admin Payment Ledger Alert (strict same-society isolation)
+    if (!adminAlreadySent) {
+      const admins = await User.find({ societyId, role: 'Admin', status: 'Active' });
+      if (admins && admins.length > 0) {
+        const ledgerUrl = `${clientUrl}/admin/payments`;
+        let anyAdminSent = false;
+        let lastAdminMessageId = null;
+        let lastAdminError = null;
+
+        for (const admin of admins) {
+          if (!admin.email) continue;
+          const adminIdempotencyKey = `payment-admin-${payment._id}-${admin._id}`;
           const adminEmailData = templates.adminPaymentReceived({
             adminName: admin.name,
             societyName,
-            residentName: resident ? resident.name : 'Resident',
-            flatNumber: bill ? bill.flatNumber : (resident ? resident.flatNumber : 'N/A'),
+            residentName: recipientName,
+            flatNumber,
             amount: payment.amount,
-            month: bill ? bill.month : 'Maintenance',
-            receiptNumber: payment.receiptNumber || `REC-${payment._id}`,
+            month,
+            receiptNumber,
             paymentDate: payment.paidAt || Date.now(),
             ledgerUrl
           });
 
-          await sendEmail({
+          const adminResult = await sendEmail({
             to: admin.email,
             subject: adminEmailData.subject,
             text: adminEmailData.text,
-            html: adminEmailData.html
+            html: adminEmailData.html,
+            idempotencyKey: adminIdempotencyKey
           });
+
+          if (adminResult.success) {
+            anyAdminSent = true;
+            lastAdminMessageId = adminResult.messageId;
+            console.log(`[PAYMENT EMAIL DELIVERED] Admin payment alert sent to "${admin.email}" (Society: ${societyName})`);
+          } else {
+            lastAdminError = adminResult.error || adminResult.reason;
+          }
         }
+
+        if (anyAdminSent) {
+          payment.adminNotificationStatus = 'Sent';
+          payment.adminEmailMessageId = lastAdminMessageId || null;
+          payment.adminNotifiedAt = new Date();
+          payment.adminNotificationError = null;
+        } else if (lastAdminError) {
+          payment.adminNotificationStatus = 'Failed';
+          payment.adminNotificationError = lastAdminError;
+          console.warn(`[PAYMENT EMAIL NOTICE] Admin notification failed: ${lastAdminError}. Payment remains verified.`);
+        }
+      } else {
+        payment.adminNotificationStatus = 'Skipped';
       }
     }
+
+    // Persist delivery status outcomes on the payment record
+    await payment.save().catch(saveErr => {
+      console.error(`[PAYMENT NOTIFICATION SAVE ERROR] ${saveErr.message}`);
+    });
+
+    return {
+      success: true,
+      residentStatus: payment.residentNotificationStatus,
+      adminStatus: payment.adminNotificationStatus
+    };
   } catch (err) {
+    // Crucial: Email failure must NEVER throw or roll back a verified payment
     console.error(`[NOTIFICATION ERROR] notifyPaymentConfirmed: ${err.message}`);
+    return { success: false, error: err.message };
   }
 };
 
