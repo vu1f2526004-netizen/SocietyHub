@@ -5,17 +5,32 @@ const User = require('../models/User');
 exports.createIssue = async (req, res, next) => {
   try {
     const { issueType, title, description, location, vehicleNumber } = req.body;
-    let photoUrl = req.file ? req.file.path : undefined;
+
+    if (!issueType || !issueType.trim()) {
+      return next(new ErrorResponse('Please provide an issue type', 400));
+    }
+    if (!title || !title.trim()) {
+      return next(new ErrorResponse('Please provide a title', 400));
+    }
+    if (!description || !description.trim()) {
+      return next(new ErrorResponse('Please provide a description', 400));
+    }
+    if (!location || !location.trim()) {
+      return next(new ErrorResponse('Please provide a location', 400));
+    }
+
+    let photoUrl = req.file ? req.file.path : (req.body.photoUrl || undefined);
 
     const issue = await CommunityIssue.create({
       societyId: req.user.societyId,
-      issueType,
-      title,
-      description,
-      location,
-      vehicleNumber,
+      issueType: issueType.trim(),
+      title: title.trim(),
+      description: description.trim(),
+      location: location.trim(),
+      vehicleNumber: vehicleNumber && vehicleNumber.trim() ? vehicleNumber.trim().toUpperCase() : undefined,
       photoUrl,
-      reporterId: req.user.id
+      reporterId: req.user.id || req.user._id,
+      status: 'Pending'
     });
 
     res.status(201).json({ success: true, data: issue });
@@ -78,10 +93,20 @@ exports.getIssues = async (req, res, next) => {
         .select('-reporterId')
         .sort({ createdAt: -1 });
     } else if (req.user.role === 'SecurityStaff') {
-      andConditions.push({ assignedTo: req.user.id });
+      andConditions.push({
+        $or: [
+          { assignedTo: req.user.id },
+          { reporterId: req.user.id },
+          { issueType: { $in: ['Parking', 'Incident'] } }
+        ]
+      });
       const filter = andConditions.length > 1 ? { $and: andConditions } : andConditions[0];
       issues = await CommunityIssue.find(filter)
+        .populate('reporterId', 'name flatNumber')
+        .populate('assignedTo', 'name')
         .sort({ createdAt: -1 });
+    } else {
+      return next(new ErrorResponse('Not authorized to access issues', 403));
     }
 
     res.status(200).json({ success: true, count: (issues || []).length, data: issues || [] });
@@ -120,14 +145,17 @@ exports.adminUpdateIssue = async (req, res, next) => {
 exports.staffUpdateIssue = async (req, res, next) => {
   try {
     const { status, staffNotes } = req.body;
-    let staffEvidenceUrl = req.file ? req.file.path : undefined;
+    let staffEvidenceUrl = req.file ? req.file.path : (req.body.staffEvidenceUrl || undefined);
     
     const issue = await CommunityIssue.findById(req.params.id);
     if (!issue || (issue.societyId && issue.societyId.toString() !== req.user.societyId.toString())) {
       return next(new ErrorResponse('Issue not found', 404));
     }
 
-    if (issue.assignedTo?.toString() !== req.user.id) {
+    const isAssigned = issue.assignedTo && issue.assignedTo.toString() === req.user.id.toString();
+    const isReporter = issue.reporterId && issue.reporterId.toString() === req.user.id.toString();
+
+    if (!isAssigned && !isReporter) {
        return next(new ErrorResponse('Not authorized', 403));
     }
 

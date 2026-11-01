@@ -1,6 +1,6 @@
 const express = require('express');
 const upload = require('../middleware/upload');
-const { verifyToken, requireRoles } = require('../middleware/auth');
+const { verifyToken, requireRoles, requireSociety } = require('../middleware/auth');
 const {
   createIssue,
   getIssues,
@@ -11,12 +11,13 @@ const {
 
 const router = express.Router();
 router.use(verifyToken);
+router.use(requireSociety);
 
 router.get('/analytics', requireRoles('Admin'), getAnalytics);
 
 router.route('/')
-  .post(requireRoles('Resident'), upload.single('photo'), createIssue)
-  .get(getIssues); // Admin gets all, Resident gets approved
+  .post(requireRoles('Resident', 'SecurityStaff', 'Admin'), upload.single('photo'), createIssue)
+  .get(requireRoles('Resident', 'SecurityStaff', 'Admin'), getIssues);
 
 router.patch('/admin/:id', requireRoles('Admin'), adminUpdateIssue);
 router.patch('/staff/:id', requireRoles('SecurityStaff'), upload.single('staffEvidence'), staffUpdateIssue);
