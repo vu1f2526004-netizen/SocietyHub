@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node tests/test_production_readiness.js && node tests/test_financial_improvements_comprehensive.js && node tests/test_staff_provisioning_modal.js && node tests/test_society_registration_payload.js && node tests/test_database_naming_case.js"
+    "test": "node tests/test_production_readiness.js && node tests/test_financial_improvements_comprehensive.js && node tests/test_staff_provisioning_modal.js && node tests/test_society_registration_payload.js && node tests/test_database_naming_case.js && node tests/test_contact_resend_delivery.js"
   },
   "keywords": [],
   "author": "",

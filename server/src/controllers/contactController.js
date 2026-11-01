@@ -1,6 +1,12 @@
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const ErrorResponse = require('../utils/errorResponse');
-const sendEmail = require('../utils/sendEmail');
+const Contact = require('../models/Contact');
+const {
+  sendResendEmail,
+  isResendConfigured,
+  getReceiverEmail
+} = require('../services/resendEmailService');
 
 // Rate limiter for public contact requests (prevents automated bot flooding)
 const contactLimiter = rateLimit({
@@ -36,7 +42,7 @@ const submitContact = async (req, res, next) => {
       return next(new ErrorResponse('Please provide a message description', 400));
     }
 
-    // 2. Strict sanitization: strip newlines and control characters from header fields to prevent header injection
+    // 2. Strict sanitization: strip newlines and control characters from header fields to prevent injection
     const cleanName = name.replace(/[\r\n\t]/g, ' ').trim().slice(0, 100);
     const cleanEmail = email.replace(/[\r\n\t]/g, '').trim().toLowerCase().slice(0, 120);
     const cleanSubject = subject.replace(/[\r\n\t]/g, ' ').trim().slice(0, 150);
@@ -59,27 +65,79 @@ const submitContact = async (req, res, next) => {
       return next(new ErrorResponse('Message must be at least 10 characters long', 400));
     }
 
-    // 3. Resolve destination recipient from trusted server configuration only (user input can NEVER override recipient)
-    const recipient = (
-      process.env.SUPPORT_EMAIL ||
-      process.env.CONTACT_EMAIL ||
-      process.env.MAIL_USER ||
-      process.env.SMTP_USER ||
-      ''
-    ).trim();
+    // 3. Deduplication and Idempotency Protection
+    // Generates a content hash to detect rapid duplicate submissions within 5 minutes
+    const dedupHash = crypto
+      .createHash('sha256')
+      .update(`${cleanEmail}:${cleanSubject}:${cleanMessage}`)
+      .digest('hex');
 
-    if (!recipient) {
-      console.error('[CONTACT CONFIG ERROR] No destination recipient configured in SUPPORT_EMAIL, CONTACT_EMAIL, or MAIL_USER');
-      return next(new ErrorResponse('The inquiry delivery service is currently unconfigured. Please contact society operations directly.', 503));
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const existingInquiry = await Contact.findOne({
+      dedupHash,
+      createdAt: { $gte: fiveMinutesAgo }
+    });
+
+    let contact;
+    if (existingInquiry) {
+      // If notification was already sent, avoid duplicate dispatch
+      if (existingInquiry.notificationStatus === 'Sent') {
+        console.log(`[CONTACT DEDUP] Duplicate inquiry from "${cleanEmail}" suppressed. Existing inquiry ID: ${existingInquiry._id}`);
+        return res.status(200).json({
+          success: true,
+          message: 'Your inquiry has already been received. Our operations team is reviewing it.',
+          data: {
+            inquiryId: existingInquiry._id,
+            notificationStatus: 'Sent'
+          }
+        });
+      }
+      // Re-use existing inquiry document for retry
+      contact = existingInquiry;
+    } else {
+      // 4. Guaranteed Database Persistence First
+      try {
+        contact = await Contact.create({
+          name: cleanName,
+          email: cleanEmail,
+          subject: cleanSubject,
+          message: cleanMessage,
+          status: 'New',
+          notificationStatus: 'Pending',
+          dedupHash,
+          ipAddress: req.ip || req.connection?.remoteAddress || null
+        });
+      } catch (dbErr) {
+        console.error(`[CONTACT DB ERROR] Failed to persist inquiry: ${dbErr.message}`);
+        return next(new ErrorResponse('Unable to save your inquiry at this moment. Please try again later.', 500));
+      }
     }
 
-    // 4. Verify SMTP transport availability
-    if (!sendEmail.isSmtpConfigured()) {
-      console.error('[CONTACT CONFIG ERROR] SMTP transport is not configured in environment variables');
-      return next(new ErrorResponse('The email delivery service is currently unavailable. Please contact society operations directly.', 503));
+    // 5. Check Resend Configuration & Recipient Availability
+    const recipient = getReceiverEmail();
+    const resendConfigured = isResendConfigured();
+
+    if (!resendConfigured || !recipient) {
+      const reason = !recipient
+        ? 'CONTACT_RECEIVER_EMAIL not configured'
+        : 'RESEND_API_KEY or EMAIL_FROM not configured';
+
+      console.warn(`[CONTACT EMAIL NOTICE] Email notification skipped (${reason}). Inquiry safely preserved in MongoDB: ${contact._id}`);
+      contact.notificationStatus = 'Pending';
+      contact.notificationError = reason;
+      await contact.save().catch(() => {});
+
+      return res.status(200).json({
+        success: true,
+        message: 'Thank you! Your inquiry has been received and our operations team will review it shortly.',
+        data: {
+          inquiryId: contact._id,
+          notificationStatus: 'Pending'
+        }
+      });
     }
 
-    // 5. Escape HTML entities for safe rendering in HTML email
+    // 6. Deliver Notification via Resend HTTPS API
     const safeHtmlMessage = cleanMessage
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -87,10 +145,7 @@ const submitContact = async (req, res, next) => {
       .replace(/"/g, '&quot;')
       .replace(/\n/g, '<br/>');
 
-    const recipientDomain = recipient.includes('@') ? recipient.split('@')[1] : 'societyhub.internal';
-
-    // 6. Deliver inquiry email with visitor's email set as Reply-To
-    const sendResult = await sendEmail({
+    const emailResult = await sendResendEmail({
       to: recipient,
       replyTo: cleanEmail,
       subject: `[SocietyHub Inquiry] ${cleanSubject}`,
@@ -123,26 +178,47 @@ const submitContact = async (req, res, next) => {
           </div>
           <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 24px 0 16px;" />
           <p style="font-size: 12px; color: #94a3b8; margin: 0; text-align: center;">
-            This inquiry was routed to ${recipientDomain} via SocietyHub Operations Relay.
+            This inquiry was securely forwarded via SocietyHub Resend HTTPS Dispatcher.
           </p>
         </div>
       `
     });
 
-    if (!sendResult || !sendResult.success || !sendResult.acceptedBySmtp) {
-      console.error(`[CONTACT ERROR] SMTP delivery rejected or failed: ${sendResult?.error || sendResult?.reason || 'Unknown error'}`);
-      return next(new ErrorResponse('Failed to send your inquiry. Please verify your details or try again later.', 502));
+    if (emailResult.success) {
+      contact.notificationStatus = 'Sent';
+      contact.emailMessageId = emailResult.messageId;
+      contact.notifiedAt = new Date();
+      contact.notificationError = null;
+      await contact.save().catch(() => {});
+
+      console.log(`[CONTACT INQUIRY DELIVERED] Inquiry from "${cleanName}" <${cleanEmail}> delivered via Resend (Message ID: ${emailResult.messageId})`);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Thank you for reaching out! Your inquiry has been sent to our operations desk.',
+        data: {
+          inquiryId: contact._id,
+          emailMessageId: emailResult.messageId,
+          notificationStatus: 'Sent'
+        }
+      });
+    } else {
+      // Email delivery failed after successful DB persistence: retain record and inform user honestly
+      contact.notificationStatus = 'Failed';
+      contact.notificationError = emailResult.error || 'Delivery failed';
+      await contact.save().catch(() => {});
+
+      console.error(`[CONTACT RESEND ERROR] Email delivery failed: ${emailResult.error}. Inquiry retained in MongoDB: ${contact._id}`);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Thank you! Your inquiry has been received and our operations team will review it shortly.',
+        data: {
+          inquiryId: contact._id,
+          notificationStatus: 'Failed'
+        }
+      });
     }
-
-    console.log(`[CONTACT INQUIRY DELIVERED] Inquiry from "${cleanName}" <${cleanEmail}> accepted by SMTP for ${recipient} (MessageId: ${sendResult.messageId})`);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Thank you for reaching out! Your inquiry has been sent to our operations desk.',
-      data: {
-        inquiryId: sendResult.messageId
-      }
-    });
   } catch (err) {
     next(err);
   }

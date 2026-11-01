@@ -183,3 +183,4 @@ if (failedTests > 0) {
   console.log('\n✅ ALL DATABASE NAMING & CASING TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);
 }
+
