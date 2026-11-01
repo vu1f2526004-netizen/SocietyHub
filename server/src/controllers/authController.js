@@ -353,18 +353,27 @@ const sendTokenResponse = (user, statusCode, res) => {
 // @access    Public
 exports.registerSociety = async (req, res, next) => {
   try {
-    const {
-      societyName,
-      address,
-      city,
-      state,
-      postalCode,
-      name,
-      email,
-      mobile,
-      password,
-      confirmPassword
-    } = req.body;
+    const body = req.body || {};
+    const rawSoc = (body.society && typeof body.society === 'object') ? body.society : {};
+    const rawSec = (body.secretary && typeof body.secretary === 'object')
+      ? body.secretary
+      : ((body.admin && typeof body.admin === 'object')
+        ? body.admin
+        : ((body.user && typeof body.user === 'object') ? body.user : {}));
+
+    const societyName = body.societyName || rawSoc.societyName || rawSoc.name || body.society_name;
+    const address = body.address || body.streetAddress || rawSoc.address || rawSoc.streetAddress || body.street_address;
+    const city = body.city || rawSoc.city;
+    const state = body.state || rawSoc.state;
+    const postalCode = body.postalCode || body.pincode || body.zipCode || rawSoc.postalCode || rawSoc.pincode || rawSoc.zipCode || body.pin_code;
+
+    const name = body.name || body.secretaryName || body.adminName || rawSec.name || rawSec.fullName || rawSec.secretaryName;
+    const email = body.email || rawSec.email;
+    const mobile = body.mobile || body.phone || body.phoneNumber || rawSec.mobile || rawSec.phone;
+    const password = body.password || rawSec.password;
+    const confirmPassword = body.confirmPassword !== undefined
+      ? body.confirmPassword
+      : (rawSec.confirmPassword !== undefined ? rawSec.confirmPassword : body.passwordConfirm);
 
     // 1. Validate required fields
     if (!societyName || !address || !city || !state || !postalCode) {

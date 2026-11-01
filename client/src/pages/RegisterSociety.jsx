@@ -141,7 +141,22 @@ const RegisterSociety = () => {
 
     try {
       setIsSubmitting(true);
-      const res = await registerSociety(formData);
+      const registrationPayload = {
+        societyName: formData.societyName.trim(),
+        address: (formData.address || formData.streetAddress || '').trim(),
+        streetAddress: (formData.address || formData.streetAddress || '').trim(),
+        city: formData.city.trim(),
+        state: formData.state.trim(),
+        postalCode: (formData.postalCode || formData.pincode || formData.zipCode || '').trim(),
+        name: (formData.name || formData.secretaryName || '').trim(),
+        email: formData.email.trim().toLowerCase(),
+        mobile: (formData.mobile || formData.phone || '').trim(),
+        phone: (formData.mobile || formData.phone || '').trim(),
+        password: formData.password,
+        confirmPassword: formData.confirmPassword
+      };
+
+      const res = await registerSociety(registrationPayload);
       setSuccessData(res);
     } catch (err) {
       setServerError(

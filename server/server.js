@@ -41,6 +41,7 @@ app.use(express.json({
     req.rawBody = buf;
   }
 }));
+app.use(express.urlencoded({ extended: true }));
 
 // Set security headers (permits cross-origin loading of static assets/documents)
 app.use(helmet({
